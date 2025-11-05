@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::PathBuf};
 
-pub struct FontData {
+pub struct FontStorage {
     /// This is the font set that has been loaded by fontdb.
     font_db: fontdb::Database,
     /// This is the font that has been loaded by fontdue.
@@ -8,13 +8,13 @@ pub struct FontData {
     loaded_font: HashMap<fontdb::ID, fontdue::Font, fxhash::FxBuildHasher>,
 }
 
-impl Default for FontData {
+impl Default for FontStorage {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl FontData {
+impl FontStorage {
     pub fn new() -> Self {
         Self {
             font_db: fontdb::Database::new(),
@@ -24,7 +24,7 @@ impl FontData {
 }
 
 /// Loading fonts into fontdb and setting up fontdb.
-impl FontData {
+impl FontStorage {
     pub fn load_font_binary(&mut self, data: impl Into<Vec<u8>>) {
         self.font_db.load_font_data(data.into());
     }
@@ -84,10 +84,17 @@ impl FontData {
 }
 
 /// Get `Font`
-impl FontData {
-    pub fn query<'a>(&'a mut self, query: &fontdb::Query) -> Option<&'a fontdue::Font> {
+impl FontStorage {
+    pub fn query_font(&mut self, query: &fontdb::Query) -> Option<&fontdue::Font> {
         let id = self.font_db.query(query)?;
+        self.font(id)
+    }
 
+    pub fn query_id(&self, query: &fontdb::Query) -> Option<fontdb::ID> {
+        self.font_db.query(query)
+    }
+
+    pub fn font(&mut self, id: fontdb::ID) -> Option<&fontdue::Font> {
         use std::collections::hash_map::Entry;
 
         match self.loaded_font.entry(id) {
@@ -98,7 +105,8 @@ impl FontData {
                         data,
                         fontdue::FontSettings {
                             collection_index: index,
-                            ..Default::default()
+                            scale: 40.0,
+                            load_substitutions: true,
                         },
                     )
                 })?;
