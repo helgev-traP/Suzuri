@@ -474,15 +474,21 @@ impl TextData {
                 }
 
                 while end < fragments.len() {
-                    let candidate =
-                        layout::LayoutBuffer::from_fragments(&fragments[start..=end], font_storage)
-                            .expect("fragment slice must not be empty");
+                    // Grow the current best chunk by one glyph at a time. The
+                    // incremental projection avoids rebuilding the entire
+                    // buffer for each candidate slice.
+                    let next_buf = layout::LayoutBuffer::from_fragments(
+                        &fragments[end..end + 1],
+                        font_storage,
+                    )
+                    .expect("fragment slice must not be empty");
 
-                    if candidate.width() > limit_width {
+                    let projected = best.projected_concat_length(&next_buf, font_storage);
+                    if projected > limit_width {
                         break;
                     }
 
-                    best = candidate;
+                    best.concat(next_buf, font_storage);
                     end += 1;
                 }
 

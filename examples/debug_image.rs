@@ -73,7 +73,7 @@ fn main() {
     let mut data = TextData::new();
     data.append(TextElement {
         font_id,
-        font_size: 24.0,
+        font_size: 32.0,
         content: "Rust text shaping exercises the wrapping logic across \
                   different width constraints so we can inspect glyph \
                   placement."
