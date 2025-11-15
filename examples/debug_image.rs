@@ -62,7 +62,7 @@ fn pick_system_font(font_storage: &mut FontStorage) -> fontdb::ID {
 
 fn main() {
     let config = {
-        let max_width = Some(390.0);
+        let max_width = Some(400.0);
         let max_height = None;
         make_config(max_width, max_height)
     };
@@ -73,7 +73,7 @@ fn main() {
     let mut data = TextData::new();
     data.append(TextElement {
         font_id,
-        font_size: 8.0,
+        font_size: 24.0,
         content: "Rust text shaping exercises the wrapping logic across \
                   different width constraints so we can inspect glyph \
                   placement."

@@ -433,15 +433,12 @@ impl TextData {
         };
 
         if let Some(limit_width) = limit {
-            if let Some(projected) = line_buf
-                .as_ref()
-                .map(|current| current.projected_concat_length(&buffer, font_storage))
-                && projected <= limit_width
-            {
-                if let Some(current) = line_buf.as_mut() {
+            if let Some(current) = line_buf.as_mut() {
+                let projected = current.projected_concat_length(&buffer, font_storage);
+                if projected <= limit_width {
                     current.concat(buffer, font_storage);
+                    return;
                 }
-                return;
             }
 
             if line_buf.is_some() {
