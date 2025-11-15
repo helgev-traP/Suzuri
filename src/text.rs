@@ -2,16 +2,29 @@ use std::collections::HashSet;
 
 use crate::glyph_id::GlyphId;
 
+/// Collection of text runs that will be laid out together.
+///
+/// The layout code walks over the stored [`TextElement`] values in order and
+/// builds line buffers from them. Keeping the runs grouped here lets the
+/// caller reuse the same builder for repeated layout work.
 pub struct TextData {
     pub texts: Vec<TextElement>,
 }
 
+/// Single run of text that references a font and size.
+///
+/// A run is processed sequentially during layout so we can merge glyphs that
+/// belong to the same font while still respecting wrapping boundaries.
 pub struct TextElement {
     pub font_id: fontdb::ID,
     pub font_size: f32,
     pub content: String,
 }
 
+/// Configuration knobs used by the text layout pipeline.
+///
+/// All parameters are honored during a single `TextData::layout` call so the
+/// caller can measure or place text inside arbitrary rectangles.
 pub struct TextLayoutConfig {
     pub max_width: Option<f32>,
     pub max_height: Option<f32>,
@@ -25,6 +38,7 @@ pub struct TextLayoutConfig {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Horizontal justification applied after each line is assembled.
 pub enum HorizontalAlign {
     Left,
     Center,
@@ -32,6 +46,7 @@ pub enum HorizontalAlign {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Vertical alignment strategy for the entire block of text.
 pub enum VerticalAlign {
     Top,
     Middle,
@@ -39,18 +54,21 @@ pub enum VerticalAlign {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Wrapping rules that define where line breaks may occur.
 pub enum WrapStyle {
     NoWrap,
     WordWrap,
     CharWrap,
 }
 
+/// Final layout output produced by [`TextData::layout`].
 pub struct TextLayout {
     pub total_height: f32,
     pub total_width: f32,
     pub lines: Vec<TextLayoutLine>,
 }
 
+/// A single row of positioned glyphs in the final layout.
 pub struct TextLayoutLine {
     pub line_height: f32,
     pub line_width: f32,
@@ -58,12 +76,16 @@ pub struct TextLayoutLine {
 }
 
 /// **Y-axis goes down**
+///
+/// Each glyph uses the global coordinates generated during layout so renderers
+/// can draw them directly without additional transformations.
 pub struct GlyphPosition {
     pub glyph_id: GlyphId,
     pub x: f32,
     pub y: f32,
 }
 
+/// Intermediate storage used while collecting glyphs for a single line.
 struct LineRecord {
     buffer: Option<layout::LayoutBuffer>,
     metrics: Option<fontdue::LineMetrics>,
@@ -76,20 +98,31 @@ impl Default for TextData {
 }
 
 impl TextData {
+    /// Creates an empty container that can receive text runs.
     pub fn new() -> Self {
         Self { texts: vec![] }
     }
 
+    /// Adds a new text run to the layout queue.
+    ///
+    /// Runs are processed in the order they were appended so callers can feed
+    /// multiple fonts or styles without copying strings together.
     pub fn append(&mut self, text: TextElement) {
         self.texts.push(text);
     }
 
+    /// Removes all queued text runs so the builder can be reused.
     pub fn clear(&mut self) {
         self.texts.clear();
     }
 }
 
 impl TextData {
+    /// Computes the bounding box that would be produced by [`Self::layout`].
+    ///
+    /// This helper simply forwards to `layout` because the layout stage must
+    /// still run to honor wrapping, alignment, and kerning rules. The resulting
+    /// size is returned as `[width, height]` for convenience.
     pub fn measure(
         &self,
         config: &TextLayoutConfig,
@@ -99,6 +132,18 @@ impl TextData {
         [layout.total_width, layout.total_height]
     }
 
+    /// Performs glyph layout according to the provided configuration.
+    ///
+    /// The implementation follows a two-stage pipeline:
+    /// 1. Each input character is translated into glyph fragments that are
+    ///    buffered into line records while respecting wrap style and width
+    ///    constraints.
+    /// 2. The buffered lines are converted into final glyph positions with
+    ///    alignment offsets applied.
+    ///
+    /// Breaking the work into stages keeps the code readable and allows future
+    /// extensions such as hyphenation without rewriting the core placement
+    /// logic.
     pub fn layout(
         &self,
         config: &TextLayoutConfig,
@@ -119,6 +164,7 @@ impl TextData {
         let word_separators = &config.word_separators;
         let linebreak_char = &config.linebreak_char;
 
+        /// Final measurements for a single laid-out line before alignment.
         struct LineData {
             width: f32,
             height: f32,
@@ -354,6 +400,12 @@ impl TextData {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Appends glyph fragments to the current line buffer.
+    ///
+    /// The helper enforces wrapping constraints by measuring the projected
+    /// width before committing new fragments. When a limit is exceeded the
+    /// current buffer is flushed into the line list, potentially splitting the
+    /// provided fragments when hard breaking is enabled.
     fn append_fragments_to_line(
         line_buf: &mut Option<layout::LayoutBuffer>,
         lines: &mut Vec<LineRecord>,
@@ -453,6 +505,11 @@ impl TextData {
         }
     }
 
+    /// Adds fragments to the current line while honoring whitespace rules.
+    ///
+    /// Leading spaces are dropped when they would start a line, mirroring
+    /// common text layout behavior. All other fragments are forwarded to the
+    /// lower-level append helper.
     fn append_fragments_with_rules(
         line_buf: &mut Option<layout::LayoutBuffer>,
         lines: &mut Vec<LineRecord>,
@@ -491,6 +548,10 @@ impl TextData {
         );
     }
 
+    /// Pushes the buffered line (if any) into the line list.
+    ///
+    /// Empty lines still carry metrics when the font provides them so the
+    /// caller can reserve vertical space for blank rows.
     fn finalize_line(
         line_buf: &mut Option<layout::LayoutBuffer>,
         lines: &mut Vec<LineRecord>,
@@ -504,6 +565,10 @@ impl TextData {
         }
     }
 
+    /// Moves the current line buffer into the line list and clears the slot.
+    ///
+    /// This is used when a wrapping decision forces a break before the incoming
+    /// fragments have been appended.
     fn push_line_buffer(line_buf: &mut Option<layout::LayoutBuffer>, lines: &mut Vec<LineRecord>) {
         if line_buf.is_some() {
             lines.push(LineRecord {
@@ -516,6 +581,9 @@ impl TextData {
 
 #[allow(dead_code)]
 mod measure {
+    //! Legacy measuring helpers kept for reference.
+
+    /// Simplified line statistics produced by `WordBuffer` aggregation.
     pub struct LineBuffer {
         max_ascent: f32,
         max_descent: f32,
@@ -527,6 +595,7 @@ mod measure {
     }
 
     impl LineBuffer {
+        /// Builds a line summary from an aggregated word buffer.
         pub fn from_word_buffer(word: &WordBuffer) -> Self {
             Self {
                 max_ascent: 0.0,
@@ -540,6 +609,7 @@ mod measure {
     }
 
     //
+    /// Small rolling buffer that accumulates glyph metrics for a single word.
     pub struct WordBuffer {
         first_char: char,
         last_char: char,
@@ -548,6 +618,7 @@ mod measure {
     }
 
     impl WordBuffer {
+        /// Creates a new word buffer starting with the provided glyph metrics.
         pub fn new(first: char, metrics: &fontdue::Metrics) -> Self {
             Self {
                 first_char: first,
@@ -557,16 +628,22 @@ mod measure {
             }
         }
 
+        /// Extends the tracked word with another character.
+        ///
+        /// The stored lengths are updated so callers can project the space the
+        /// word would occupy without re-computing individual glyph metrics.
         pub fn push(&mut self, char: char, metrics: &fontdue::Metrics) {
             self.last_char = char;
             self.instance_length = self.advance_length + metrics.width as f32 + metrics.xmin as f32;
             self.advance_length += metrics.advance_width;
         }
 
+        /// Returns the measured width of the buffered word.
         pub fn length(&self) -> f32 {
             self.instance_length
         }
 
+        /// Predicts the word width if another glyph with `metrics` was appended.
         pub fn length_if_pushed(&self, metrics: &fontdue::Metrics) -> f32 {
             self.advance_length + metrics.width as f32 + metrics.xmin as f32
         }
@@ -580,6 +657,10 @@ mod layout {
     use std::sync::Arc;
 
     #[derive(Clone)]
+    /// Precomputed glyph data used to build layout buffers.
+    ///
+    /// Storing the font handle allows kerning to be applied without repeatedly
+    /// fetching the same font from storage.
     pub struct GlyphFragment {
         pub ch: char,
         pub glyph_idx: u16,
@@ -590,7 +671,11 @@ mod layout {
         pub font: Arc<fontdue::Font>,
     }
 
-    /// Y-Origin at the baseline.
+    /// Buffer of glyph positions with origin located on the baseline.
+    ///
+    /// Layout buffers are concatenated as new fragments are processed, letting
+    /// us calculate kerning-aware widths before the final glyph positions are
+    /// produced.
     pub struct LayoutBuffer {
         pub instance_length: f32,
 
@@ -611,6 +696,10 @@ mod layout {
     }
 
     impl LayoutBuffer {
+        /// Creates a buffer containing a single glyph fragment.
+        ///
+        /// The glyph is stored relative to the baseline so it can be shifted
+        /// after all fragments for the line are known.
         pub fn new(
             glyph_idx: u16,
             metrics: &fontdue::Metrics,
@@ -643,6 +732,11 @@ mod layout {
             buffer
         }
 
+        /// Appends another glyph to the buffer, updating metrics and kerning.
+        ///
+        /// The kerning calculation uses the provided font handle when the
+        /// previous and new glyph share the same font and size. This keeps the
+        /// layout accurate while avoiding redundant lookups.
         pub fn push(
             &mut self,
             glyph_idx: u16,
@@ -701,6 +795,11 @@ mod layout {
             });
         }
 
+        /// Concatenates another layout buffer, adjusting positions in-place.
+        ///
+        /// When the buffers originate from the same font and size we apply
+        /// kerning between the boundary glyphs; otherwise the buffers are joined
+        /// using the recorded advance of the current buffer.
         pub fn concat(&mut self, other: LayoutBuffer, font_storage: &mut FontStorage) {
             let advance_kerned = if self.last_font_id == other.first_font_id
                 && (self.last_font_size - other.first_font_size).abs() < f32::EPSILON
@@ -741,10 +840,15 @@ mod layout {
             }
         }
 
+        /// Returns the current width of the buffer.
         pub fn width(&self) -> f32 {
             self.instance_length.max(0.0)
         }
 
+        /// Estimates the width after concatenating `other` without modifying `self`.
+        ///
+        /// This prediction is used during wrapping decisions to avoid expensive
+        /// cloning or re-layout work.
         pub fn projected_concat_length(
             &self,
             other: &LayoutBuffer,
@@ -772,10 +876,15 @@ mod layout {
             x_offset + other.instance_length
         }
 
+        /// Returns line metrics derived from the buffered glyph fragments.
         pub fn line_metrics(&self) -> (f32, f32, f32) {
             (self.max_accent, self.max_descent, self.max_line_gap)
         }
 
+        /// Builds a layout buffer from a slice of glyph fragments.
+        ///
+        /// `None` is returned when the slice is empty because there are no
+        /// glyphs to measure or position.
         pub fn from_fragments(
             fragments: &[GlyphFragment],
             font_storage: &mut FontStorage,
