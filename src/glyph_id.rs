@@ -1,7 +1,7 @@
 pub const SUB_PIXEL_QUANTIZE: f32 = 256f32;
 
 /// The same glyph is not guaranteed to receive the same `GlyphId` across program runs.
-#[derive(Clone, Copy, Debug, PartialEq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct GlyphId {
     font_id: fontdb::ID,
     glyph_index: u16,
