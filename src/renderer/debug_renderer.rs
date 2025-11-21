@@ -1,26 +1,6 @@
 use crate::font_storage::FontStorage;
+use crate::renderer::Bitmap;
 use crate::text::{GlyphPosition, TextLayout};
-
-/// Simple grayscale bitmap used for debugging text layout.
-///
-/// Pixels are stored in row-major order with the origin at the top-left.
-/// Each pixel is a single byte where `0` is background and `255` is white.
-pub struct DebugBitmap {
-    pub width: u32,
-    pub height: u32,
-    pub pixels: Vec<u8>,
-}
-
-impl DebugBitmap {
-    fn new(width: u32, height: u32) -> Self {
-        let len = width.saturating_mul(height) as usize;
-        Self {
-            width,
-            height,
-            pixels: vec![0; len],
-        }
-    }
-}
 
 /// Renders an existing `TextLayout` into a grayscale bitmap.
 ///
@@ -30,16 +10,16 @@ pub fn render_layout_to_bitmap(
     layout: &TextLayout,
     image_size: [usize; 2],
     font_storage: &mut FontStorage,
-) -> DebugBitmap {
-    let width = image_size[0] as u32;
-    let height = image_size[1] as u32;
+) -> Bitmap {
+    let width = image_size[0];
+    let height = image_size[1];
 
     // Empty layouts produce an empty bitmap so callers can distinguish the case.
     if width == 0 || height == 0 {
-        return DebugBitmap::new(0, 0);
+        return Bitmap::new(0, 0);
     }
 
-    let mut bitmap = DebugBitmap::new(width, height);
+    let mut bitmap = Bitmap::new(width, height);
 
     for line in &layout.lines {
         for glyph in &line.glyphs {
@@ -56,7 +36,7 @@ pub fn render_layout_to_bitmap(
 /// `GlyphId`. Coverage values are added to the existing pixel contents and
 /// clamped to 255 to keep the bitmap valid.
 fn render_glyph_into_bitmap(
-    bitmap: &mut DebugBitmap,
+    bitmap: &mut Bitmap,
     glyph_pos: &GlyphPosition,
     font_storage: &mut FontStorage,
 ) {
@@ -82,6 +62,18 @@ fn render_glyph_into_bitmap(
     let origin_y = glyph_pos.y;
 
     for row in 0..glyph_height {
+        let y = origin_y + row as f32;
+        // Skip rows strictly above the canvas
+        if y < 0.0 {
+            continue;
+        }
+
+        let iy = y.floor() as isize;
+        // Skip rows strictly below the canvas (or above if floor pushed it negative, though y < 0 check handles most)
+        if iy < 0 || iy as usize >= bitmap.height {
+            continue;
+        }
+
         for col in 0..glyph_width {
             let src_alpha = coverage[(row * glyph_width + col) as usize];
             if src_alpha == 0 {
@@ -89,24 +81,17 @@ fn render_glyph_into_bitmap(
             }
 
             let x = origin_x + col as f32;
-            let y = origin_y + row as f32;
-
-            if x < 0.0 || y < 0.0 {
+            if x < 0.0 {
                 continue;
             }
 
-            let ix = x.floor() as u32;
-            let iy = y.floor() as u32;
-
-            if ix >= bitmap.width || iy >= bitmap.height {
+            let ix = x.floor() as isize;
+            if ix < 0 {
                 continue;
             }
 
-            let idx = (iy * bitmap.width + ix) as usize;
-            let existing = bitmap.pixels[idx] as u16;
-            let added = src_alpha as u16;
-            let combined = existing.saturating_add(added).min(255);
-            bitmap.pixels[idx] = combined as u8;
+            // The accumulate method handles the width/height bounds check safely
+            bitmap.accumulate(ix as usize, iy as usize, src_alpha);
         }
     }
 }

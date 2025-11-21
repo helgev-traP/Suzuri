@@ -526,7 +526,10 @@ impl TextData {
     ///
     /// This is used when a wrapping decision forces a break before the incoming
     /// fragments have been appended.
-    fn push_line_buffer(line_buf: &mut Option<layout_utl::LayoutBuffer>, lines: &mut Vec<LineRecord>) {
+    fn push_line_buffer(
+        line_buf: &mut Option<layout_utl::LayoutBuffer>,
+        lines: &mut Vec<LineRecord>,
+    ) {
         if line_buf.is_some() {
             lines.push(LineRecord {
                 buffer: line_buf.take(),

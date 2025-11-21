@@ -114,7 +114,7 @@ fn main() {
     }
 
     let img_buffer: ImageBuffer<Luma<u8>, Vec<u8>> =
-        ImageBuffer::from_raw(bitmap.width, bitmap.height, bitmap.pixels)
+        ImageBuffer::from_raw(bitmap.width as u32, bitmap.height as u32, bitmap.pixels)
             .expect("bitmap dimensions must match pixel buffer length");
 
     img_buffer
