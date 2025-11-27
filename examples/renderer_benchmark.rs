@@ -138,7 +138,7 @@ fn main() {
 
         // Warmup / First run (includes caching overhead)
         let start_first = Instant::now();
-        let bitmap = renderer.render_layout(&layout, image_size, &mut font_storage);
+        let bitmap = renderer.render(&layout, image_size, &mut font_storage);
         std::hint::black_box(bitmap);
         let duration_first = start_first.elapsed();
         println!("Cpu Renderer (First Run): {:.2?}", duration_first);
@@ -146,7 +146,7 @@ fn main() {
         // Cached runs
         let start = Instant::now();
         for _ in 0..iterations {
-            let bitmap = renderer.render_layout(&layout, image_size, &mut font_storage);
+            let bitmap = renderer.render(&layout, image_size, &mut font_storage);
             std::hint::black_box(bitmap);
         }
         let duration = start.elapsed();

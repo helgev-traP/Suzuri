@@ -18,7 +18,7 @@ impl CpuRenderer {
     }
 
     /// Renders the provided [`TextLayout`] into an [`Bitmap`].
-    pub fn render_layout(
+    pub fn render(
         &mut self,
         layout: &TextLayout,
         image_size: [usize; 2],
@@ -33,6 +33,9 @@ impl CpuRenderer {
 
         let mut bitmap = Bitmap::new(width, height);
         for line in &layout.lines {
+            if line.bottom <= 0.0 || line.top >= height as f32 {
+                continue;
+            }
             for glyph in &line.glyphs {
                 self.render_glyph_into_bitmap(&mut bitmap, glyph, font_storage);
             }

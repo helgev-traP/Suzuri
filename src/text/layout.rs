@@ -55,6 +55,8 @@ pub struct TextLayout {
 pub struct TextLayoutLine {
     pub line_height: f32,
     pub line_width: f32,
+    pub top: f32,
+    pub bottom: f32,
     pub glyphs: Vec<GlyphPosition>,
 }
 
@@ -125,6 +127,7 @@ impl TextData {
         struct LineData {
             width: f32,
             height: f32,
+            y: f32,
             glyphs: Vec<GlyphPosition>,
         }
 
@@ -300,6 +303,7 @@ impl TextData {
             layout_lines.push(LineData {
                 width,
                 height: scaled_line_height,
+                y: cursor_y - scaled_line_height,
                 glyphs: glyph_positions,
             });
         }
@@ -345,6 +349,8 @@ impl TextData {
             lines_out.push(TextLayoutLine {
                 line_height: line.height,
                 line_width: line.width,
+                top: line.y + vertical_offset,
+                bottom: line.y + vertical_offset + line.height,
                 glyphs: line.glyphs,
             });
         }

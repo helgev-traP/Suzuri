@@ -111,7 +111,7 @@ fn main() {
 
     // Render
     let timer = std::time::Instant::now();
-    let bitmap = renderer.render_layout(&layout, [bitmap_width, bitmap_height], &mut font_storage);
+    let bitmap = renderer.render(&layout, [bitmap_width, bitmap_height], &mut font_storage);
     let elapsed = timer.elapsed();
 
     println!(
