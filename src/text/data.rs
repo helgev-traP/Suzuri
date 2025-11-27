@@ -3,6 +3,7 @@
 /// The layout code walks over the stored [`TextElement`] values in order and
 /// builds line buffers from them. Keeping the runs grouped here lets the
 /// caller reuse the same builder for repeated layout work.
+#[derive(Clone, Debug, PartialEq)]
 pub struct TextData {
     pub texts: Vec<TextElement>,
 }
@@ -11,6 +12,7 @@ pub struct TextData {
 ///
 /// A run is processed sequentially during layout so we can merge glyphs that
 /// belong to the same font while still respecting wrapping boundaries.
+#[derive(Clone, Debug, PartialEq)]
 pub struct TextElement {
     pub font_id: fontdb::ID,
     pub font_size: f32,
