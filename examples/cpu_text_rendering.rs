@@ -6,7 +6,7 @@ use image::{ImageBuffer, Luma};
 use wgfont::{
     font_storage::FontStorage,
     fontdb::{self, Family, Query},
-    renderer::{CpuRenderer, cpu_renderer::GlyphCache},
+    renderer::{CpuRenderer, cpu_renderer::GlyphCache, debug_renderer::Bitmap},
     text::{HorizontalAlign, TextData, TextElement, TextLayoutConfig, VerticalAlign, WrapStyle},
 };
 
@@ -80,6 +80,7 @@ fn main() {
                   This text is rendered using the CPU renderer with a glyph cache.\n\
                   It supports caching and reuse of rasterized glyphs."
             .into(),
+        user_data: (),
     });
 
     // Layout
@@ -111,7 +112,13 @@ fn main() {
 
     // Render
     let timer = std::time::Instant::now();
-    let bitmap = renderer.render(&layout, [bitmap_width, bitmap_height], &mut font_storage);
+    let mut bitmap = Bitmap::new(bitmap_width, bitmap_height);
+    renderer.render(
+        &layout,
+        [bitmap_width, bitmap_height],
+        &mut font_storage,
+        &mut |pos, alpha, _| bitmap.accumulate(pos[0], pos[1], alpha),
+    );
     let elapsed = timer.elapsed();
 
     println!(

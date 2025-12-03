@@ -1,7 +1,6 @@
 mod glyph_cache;
 
 use crate::font_storage::FontStorage;
-use crate::renderer::Bitmap;
 use crate::text::{GlyphPosition, TextLayout};
 
 pub use glyph_cache::{GlyphCache, GlyphCacheItem};
@@ -17,38 +16,37 @@ impl CpuRenderer {
         Self { cache }
     }
 
-    /// Renders the provided [`TextLayout`] into an [`Bitmap`].
-    pub fn render(
+    /// Renders the provided [`TextLayout`] by calling the closure for each pixel.
+    pub fn render<T>(
         &mut self,
-        layout: &TextLayout,
+        layout: &TextLayout<T>,
         image_size: [usize; 2],
         font_storage: &mut FontStorage,
-    ) -> Bitmap {
+        f: &mut dyn FnMut([usize; 2], u8, &T),
+    ) {
         let width = image_size[0];
         let height = image_size[1];
 
         if width == 0 || height == 0 {
-            return Bitmap::new(0, 0);
+            return;
         }
 
-        let mut bitmap = Bitmap::new(width, height);
         for line in &layout.lines {
             if line.bottom <= 0.0 || line.top >= height as f32 {
                 continue;
             }
             for glyph in &line.glyphs {
-                self.render_glyph_into_bitmap(&mut bitmap, glyph, font_storage);
+                self.render_glyph(glyph, font_storage, image_size, f);
             }
         }
-
-        bitmap
     }
 
-    fn render_glyph_into_bitmap(
+    fn render_glyph<T>(
         &mut self,
-        bitmap: &mut Bitmap,
-        glyph_pos: &GlyphPosition,
+        glyph_pos: &GlyphPosition<T>,
         font_storage: &mut FontStorage,
+        image_size: [usize; 2],
+        f: &mut dyn FnMut([usize; 2], u8, &T),
     ) {
         let cached = match self.cache.get(&glyph_pos.glyph_id, font_storage) {
             Some(cached) => cached,
@@ -83,7 +81,7 @@ impl CpuRenderer {
                 continue;
             }
             let iy = y.floor() as isize;
-            if iy < 0 || iy as usize >= bitmap.height {
+            if iy < 0 || iy as usize >= image_size[1] {
                 continue;
             }
 
@@ -99,13 +97,13 @@ impl CpuRenderer {
                 }
 
                 let ix = x.floor() as isize;
-                if ix < 0 {
+                if ix < 0 || ix as usize >= image_size[0] {
                     continue;
                 }
 
                 // Use the shared accumulate method which handles bounds checking (again) and saturation.
                 // Double bounds checking is acceptable here for code reuse and safety.
-                bitmap.accumulate(ix as usize, iy as usize, src_alpha);
+                f([ix as usize, iy as usize], src_alpha, &glyph_pos.user_data);
             }
         }
     }

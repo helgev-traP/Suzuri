@@ -1,13 +1,12 @@
 use crate::font_storage::FontStorage;
-use crate::renderer::Bitmap;
 use crate::text::{GlyphPosition, TextLayout};
 
 /// Renders an existing `TextLayout` into a grayscale bitmap.
 ///
 /// The caller is responsible for choosing the bitmap dimensions. This keeps the
 /// renderer focused on glyph rasterization and clipping.
-pub fn render_layout_to_bitmap(
-    layout: &TextLayout,
+pub fn render_layout_to_bitmap<T>(
+    layout: &TextLayout<T>,
     image_size: [usize; 2],
     font_storage: &mut FontStorage,
 ) -> Bitmap {
@@ -35,9 +34,9 @@ pub fn render_layout_to_bitmap(
 /// The glyph is rasterized using `fontdue` at the size encoded in the
 /// `GlyphId`. Coverage values are added to the existing pixel contents and
 /// clamped to 255 to keep the bitmap valid.
-fn render_glyph_into_bitmap(
+fn render_glyph_into_bitmap<T>(
     bitmap: &mut Bitmap,
-    glyph_pos: &GlyphPosition,
+    glyph_pos: &GlyphPosition<T>,
     font_storage: &mut FontStorage,
 ) {
     let glyph_id = glyph_pos.glyph_id;
@@ -93,5 +92,40 @@ fn render_glyph_into_bitmap(
             // The accumulate method handles the width/height bounds check safely
             bitmap.accumulate(ix as usize, iy as usize, src_alpha);
         }
+    }
+}
+
+/// Simple grayscale bitmap used for debugging text layout.
+///
+/// Pixels are stored in row-major order with the origin at the top-left.
+/// Each pixel is a single byte where `0` is background and `255` is white.
+pub struct Bitmap {
+    pub width: usize,
+    pub height: usize,
+    pub pixels: Vec<u8>,
+}
+
+impl Bitmap {
+    pub fn new(width: usize, height: usize) -> Self {
+        let len = width.saturating_mul(height);
+        Self {
+            width,
+            height,
+            pixels: vec![0; len],
+        }
+    }
+
+    /// Adds the given alpha value to the pixel at (x, y).
+    /// The result is saturated at 255.
+    /// Does nothing if the coordinates are out of bounds.
+    #[inline]
+    pub fn accumulate(&mut self, x: usize, y: usize, alpha: u8) {
+        if x >= self.width || y >= self.height {
+            return;
+        }
+        let idx = y * self.width + x;
+        let existing = self.pixels[idx] as u16;
+        let added = alpha as u16;
+        self.pixels[idx] = existing.saturating_add(added).min(255) as u8;
     }
 }

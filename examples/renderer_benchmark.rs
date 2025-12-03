@@ -84,6 +84,7 @@ fn main() {
         font_id,
         font_size: 24.0,
         content: text_content,
+        user_data: (),
     });
 
     // Perform layout once
@@ -138,7 +139,13 @@ fn main() {
 
         // Warmup / First run (includes caching overhead)
         let start_first = Instant::now();
-        let bitmap = renderer.render(&layout, image_size, &mut font_storage);
+        let mut bitmap = debug_renderer::Bitmap::new(image_size[0], image_size[1]);
+        renderer.render(
+            &layout,
+            image_size,
+            &mut font_storage,
+            &mut |pos, alpha, _| bitmap.accumulate(pos[0], pos[1], alpha),
+        );
         std::hint::black_box(bitmap);
         let duration_first = start_first.elapsed();
         println!("Cpu Renderer (First Run): {:.2?}", duration_first);
@@ -146,7 +153,13 @@ fn main() {
         // Cached runs
         let start = Instant::now();
         for _ in 0..iterations {
-            let bitmap = renderer.render(&layout, image_size, &mut font_storage);
+            let mut bitmap = debug_renderer::Bitmap::new(image_size[0], image_size[1]);
+            renderer.render(
+                &layout,
+                image_size,
+                &mut font_storage,
+                &mut |pos, alpha, _| bitmap.accumulate(pos[0], pos[1], alpha),
+            );
             std::hint::black_box(bitmap);
         }
         let duration = start.elapsed();

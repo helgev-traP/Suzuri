@@ -78,6 +78,7 @@ fn main() {
                   different width constraints so we can inspect glyph \
                   placement."
             .into(),
+        user_data: (),
     });
 
     // Render the layout for a single width as an image.
