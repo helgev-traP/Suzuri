@@ -6,7 +6,7 @@ use crate::{glyph_id::GlyphId, text::TextData};
 ///
 /// All parameters are honored during a single `TextData::layout` call so the
 /// caller can measure or place text inside arbitrary rectangles.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TextLayoutConfig {
     pub max_width: Option<f32>,
     pub max_height: Option<f32>,
@@ -17,6 +17,22 @@ pub struct TextLayoutConfig {
     pub wrap_hard_break: bool,
     pub word_separators: HashSet<char, fxhash::FxBuildHasher>,
     pub linebreak_char: HashSet<char, fxhash::FxBuildHasher>,
+}
+
+impl Default for TextLayoutConfig {
+    fn default() -> Self {
+        Self {
+            max_width: None,
+            max_height: None,
+            horizontal_align: HorizontalAlign::Left,
+            vertical_align: VerticalAlign::Top,
+            line_height_scale: 1.0,
+            wrap_style: WrapStyle::NoWrap,
+            wrap_hard_break: false,
+            word_separators: HashSet::default(),
+            linebreak_char: HashSet::default(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,6 +60,7 @@ pub enum WrapStyle {
 }
 
 /// Final layout output produced by [`TextData::layout`].
+#[derive(Clone, Debug, PartialEq)]
 pub struct TextLayout {
     pub config: TextLayoutConfig,
     pub total_height: f32,
@@ -52,6 +69,7 @@ pub struct TextLayout {
 }
 
 /// A single row of positioned glyphs in the final layout.
+#[derive(Clone, Debug, PartialEq)]
 pub struct TextLayoutLine {
     pub line_height: f32,
     pub line_width: f32,
@@ -64,6 +82,7 @@ pub struct TextLayoutLine {
 ///
 /// Each glyph uses the global coordinates generated during layout so renderers
 /// can draw them directly without additional transformations.
+#[derive(Clone, Debug, PartialEq)]
 pub struct GlyphPosition {
     pub glyph_id: GlyphId,
     pub x: f32,
