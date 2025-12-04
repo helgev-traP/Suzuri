@@ -4,13 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+euclid = "0.22.11"
 fontdb = "0.23.0"
 fontdue = "0.9.3"
 fxhash = "0.2.1"
-guillotiere = "0.6.2"
 log = "0.4.28"
-mini-moka = "0.10.3"
-quick_cache = "0.6.18"
+nalgebra = "0.34.1"
 wgpu = "27.0.1"
 
 [dev-dependencies]

@@ -126,12 +126,12 @@ fn main() {
         // Configure cache
         let cache_config = [
             (
-                NonZeroUsize::new(1024).unwrap(), // Block size
-                NonZeroUsize::new(2048).unwrap(), // Capacity
+                NonZeroUsize::new(512).unwrap(), // Block size
+                NonZeroUsize::new(128).unwrap(), // Capacity
             ),
             (
-                NonZeroUsize::new(4096).unwrap(),
-                NonZeroUsize::new(512).unwrap(),
+                NonZeroUsize::new(1024).unwrap(),
+                NonZeroUsize::new(128).unwrap(),
             ),
         ];
         let cache = GlyphCache::new(&cache_config);

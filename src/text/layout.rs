@@ -68,6 +68,16 @@ pub struct TextLayout<T> {
     pub lines: Vec<TextLayoutLine<T>>,
 }
 
+impl<T> TextLayout<T> {
+    pub fn len_lines(&self) -> usize {
+        self.lines.len()
+    }
+
+    pub fn len_glyphs(&self) -> usize {
+        self.lines.iter().map(|line| line.glyphs.len()).sum()
+    }
+}
+
 /// A single row of positioned glyphs in the final layout.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextLayoutLine<T> {
@@ -88,6 +98,17 @@ pub struct GlyphPosition<T> {
     pub x: f32,
     pub y: f32,
     pub user_data: T,
+}
+// place holder for eq and hash
+// todo: consider another way
+impl<T: Eq> Eq for GlyphPosition<T> {}
+impl<T: std::hash::Hash> std::hash::Hash for GlyphPosition<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.glyph_id.hash(state);
+        self.x.to_bits().hash(state);
+        self.y.to_bits().hash(state);
+        self.user_data.hash(state);
+    }
 }
 
 /// Intermediate storage used while collecting glyphs for a single line.

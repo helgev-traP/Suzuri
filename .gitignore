@@ -15,6 +15,3 @@ Cargo.lock
 
 # ignore main.rs for test purposes
 src/main.rs
-
-# ignore debug outputs
-debug/

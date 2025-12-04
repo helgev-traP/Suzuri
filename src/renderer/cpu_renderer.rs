@@ -16,6 +16,10 @@ impl CpuRenderer {
         Self { cache }
     }
 
+    pub fn clear_cache(&mut self) {
+        self.cache.clear();
+    }
+
     /// Renders the provided [`TextLayout`] by calling the closure for each pixel.
     pub fn render<T>(
         &mut self,
@@ -106,15 +110,5 @@ impl CpuRenderer {
                 f([ix as usize, iy as usize], src_alpha, &glyph_pos.user_data);
             }
         }
-    }
-
-    /// Returns a reference to the underlying glyph cache.
-    pub fn cache(&self) -> &GlyphCache {
-        &self.cache
-    }
-
-    /// Returns a mutable reference to the underlying glyph cache.
-    pub fn cache_mut(&mut self) -> &mut GlyphCache {
-        &mut self.cache
     }
 }

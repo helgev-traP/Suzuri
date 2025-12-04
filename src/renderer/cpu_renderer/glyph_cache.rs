@@ -4,10 +4,8 @@ use std::num::NonZeroUsize;
 use crate::font_storage::FontStorage;
 use crate::glyph_id::GlyphId;
 
-// use super::{CachedGlyph, GlyphCache};
-
 #[derive(Default, Clone, Copy)]
-struct LruNodes {
+struct LruNode {
     newer: Option<usize>,
     older: Option<usize>,
 }
@@ -17,7 +15,7 @@ struct VecAtlas<T: Default + Clone + Copy> {
     block_size: usize,
     data: Vec<T>,
 
-    lru_nodes: Vec<LruNodes>,
+    lru_nodes: Vec<LruNode>,
     lru_head: Option<usize>,
     lru_tail: Option<usize>,
     lru_map: HashMap<GlyphId, usize, fxhash::FxBuildHasher>,
@@ -34,7 +32,7 @@ impl<T: Default + Clone + Copy> VecAtlas<T> {
             capacity,
             block_size,
             data: vec![T::default(); capacity * block_size],
-            lru_nodes: vec![LruNodes::default(); capacity],
+            lru_nodes: vec![LruNode::default(); capacity],
             lru_head: None,
             lru_tail: None,
             lru_map: HashMap::with_capacity_and_hasher(capacity, fxhash::FxBuildHasher::default()),
@@ -45,7 +43,8 @@ impl<T: Default + Clone + Copy> VecAtlas<T> {
 
     fn clear(&mut self) {
         self.lru_map.clear();
-        self.lru_empties = (0..self.capacity).collect();
+        self.lru_empties.clear();
+        self.lru_empties.extend(0..self.capacity);
         self.lru_keys.fill(None);
         self.lru_head = None;
         self.lru_tail = None;
