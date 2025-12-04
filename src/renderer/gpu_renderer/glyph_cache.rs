@@ -29,6 +29,11 @@ mod cache_state {
         current_batch_id: usize,
     }
 
+    pub enum GetOrPushResult {
+        Hit,
+        NeedToUpload,
+    }
+
     impl CacheState {
         pub fn new(capacity: NonZeroUsize) -> Self {
             let capacity = capacity.get();
@@ -55,17 +60,20 @@ mod cache_state {
             self.current_batch_id = 0;
         }
     }
-
     impl CacheState {
         pub fn new_batch(&mut self) {
             self.current_batch_id = self.current_batch_id.wrapping_add(1);
         }
 
-        pub fn get_or_push_and_protect(&mut self, glyph_id: &GlyphId) -> Option<usize> {
-            if let Some(&idx) = self.lru_map.get(glyph_id) {
-                todo!()
+        pub fn get_or_push_and_protect(
+            &mut self,
+            glyph_id: &GlyphId,
+        ) -> Option<(usize, GetOrPushResult)> {
+            if let Some(idx) = self.get_and_protect_entry(glyph_id) {
+                Some((idx, GetOrPushResult::Hit))
             } else {
-                todo!()
+                let idx = self.push_and_evicting_unprotected(glyph_id)?;
+                Some((idx, GetOrPushResult::NeedToUpload))
             }
         }
 
@@ -283,7 +291,7 @@ impl CacheAtlas {
 }
 
 pub struct GlyphCacheItem {
-    pub atlas_idx: usize,
+    pub texture_index: usize,
     pub texture_size: usize,
     pub glyph_box: Box2D<usize, UnknownUnit>,
 }
@@ -305,6 +313,11 @@ impl GlyphCacheItem {
             ),
         )
     }
+}
+
+pub enum GetOrPushResult {
+    Hit,
+    NeedToUpload,
 }
 
 pub struct GlyphCache {
@@ -341,8 +354,16 @@ impl GlyphCache {
         &mut self,
         glyph_id: &GlyphId,
         font_storage: &mut FontStorage,
-    ) -> Option<GlyphCacheItem> {
-        todo!()
+    ) -> Option<(GlyphCacheItem, GetOrPushResult)> {
+        if let Some(item) = self.get_and_protect_entry(glyph_id, font_storage) {
+            return Some((item, GetOrPushResult::Hit));
+        }
+
+        if let Some(item) = self.push_and_evicting_unprotected(glyph_id, font_storage) {
+            return Some((item, GetOrPushResult::NeedToUpload));
+        }
+
+        None
     }
 
     pub fn get_and_protect_entry(
@@ -364,7 +385,7 @@ impl GlyphCache {
             .position(|cache| glyph_bitmap_size <= cache.tile_size)?;
 
         let cache = &mut self.caches[cache_index];
-        let atlas_idx = cache_index;
+        let texture_index = cache_index;
         let texture_size = cache.texture_size;
         let [x_min, y_min] = cache.get_and_protect_entry(glyph_id)?;
         let x_max = x_min + glyph_metrics.width;
@@ -373,7 +394,7 @@ impl GlyphCache {
         let glyph_box = Box2D::new(Point2D::new(x_min, y_min), Point2D::new(x_max, y_max));
 
         Some(GlyphCacheItem {
-            atlas_idx,
+            texture_index,
             texture_size,
             glyph_box,
         })
@@ -398,7 +419,7 @@ impl GlyphCache {
             .position(|cache| glyph_bitmap_size <= cache.tile_size)?;
 
         let cache = &mut self.caches[cache_index];
-        let atlas_idx = cache_index;
+        let texture_index = cache_index;
         let texture_size = cache.texture_size;
         let [x_min, y_min] = cache.get_and_push_with_evicting_unprotected(glyph_id)?;
         let x_max = x_min + glyph_metrics.width;
@@ -407,7 +428,7 @@ impl GlyphCache {
         let glyph_box = Box2D::new(Point2D::new(x_min, y_min), Point2D::new(x_max, y_max));
 
         Some(GlyphCacheItem {
-            atlas_idx,
+            texture_index,
             texture_size,
             glyph_box,
         })
