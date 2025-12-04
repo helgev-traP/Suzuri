@@ -1,3 +1,4 @@
+use euclid::Box2D;
 use std::collections::HashSet;
 
 use crate::{
@@ -7,6 +8,22 @@ use crate::{
 
 mod glyph_cache;
 pub use glyph_cache::{CacheAtlas, GlyphAtlasConfig, GlyphCache, GlyphCacheItem};
+
+pub struct WriteToAtlas {
+    atlas_page: usize,
+    origin_x: usize,
+    origin_y: usize,
+    width: usize,
+    height: usize,
+    data: Vec<u8>,
+}
+
+pub struct GlyphInstance<T> {
+    atlas_page: usize,
+    uv_box: Box2D<f32, euclid::UnknownUnit>,
+    position_box: Box2D<f32, euclid::UnknownUnit>,
+    user_data: T,
+}
 
 pub struct GpuRenderer {
     cache: GlyphCache,
@@ -27,58 +44,41 @@ impl GpuRenderer {
         &mut self,
         layout: &TextLayout<T>,
         font_storage: &mut FontStorage,
-        mut f: impl FnMut(&GlyphPosition<T>, &GlyphCacheItem),
+        mut write_atlas: &mut impl FnMut(Vec<WriteToAtlas>),
+        mut draw_call: &mut impl FnMut(Vec<GlyphInstance<T>>),
     ) {
-        todo!()
-    }
+        let update_atlas_list: Vec<WriteToAtlas> = Vec::new();
+        let instance_list: Vec<GlyphInstance<T>> = Vec::new();
 
-    pub fn render_true_order<T: Clone + Eq + std::hash::Hash>(
-        &mut self,
-        layout: &TextLayout<T>,
-        font_storage: &mut FontStorage,
-        mut f: impl FnMut(&GlyphPosition<T>, &GlyphCacheItem),
-    ) {
-        let mut not_yet_rendered = layout
-            .lines
-            .iter()
-            .flat_map(|line| line.glyphs.iter().cloned())
-            .collect::<HashSet<_, fxhash::FxBuildHasher>>();
+        for line in &layout.lines {
+            for glyph in &line.glyphs {
+                let GlyphPosition::<T> {
+                    glyph_id,
+                    x,
+                    y,
+                    user_data,
+                } = glyph;
 
-        let mut pingpong_set = HashSet::<_, fxhash::FxBuildHasher>::default();
-
-        while !not_yet_rendered.is_empty() {
-            let mut render_in_this_batch = Vec::new();
-
-            // 1
-            // protect entry
-            for glyph in not_yet_rendered.drain() {
-                if let Some(cached_glyph) = self
-                    .cache
-                    .get_and_protect_entry(&glyph.glyph_id, font_storage)
+                if let Some(glyph_cache_item) =
+                    self.cache.get_or_push_and_protect(glyph_id, font_storage)
                 {
-                    render_in_this_batch.push((glyph.clone(), cached_glyph));
-                    pingpong_set.insert(glyph);
-                }
-            }
-            std::mem::swap(&mut not_yet_rendered, &mut pingpong_set);
+                    let GlyphCacheItem {
+                        atlas_idx,
+                        texture_size,
+                        glyph_box,
+                    } = glyph_cache_item;
 
-            // 2
-            // push with evicting unprotected
-            for glyph in not_yet_rendered.drain() {
-                if let Some(cached_glyph) = self
-                    .cache
-                    .get_and_push_with_evicting_unprotected(&glyph.glyph_id, font_storage)
-                {
-                    render_in_this_batch.push((glyph.clone(), cached_glyph));
-                    pingpong_set.insert(glyph);
-                }
-            }
-            std::mem::swap(&mut not_yet_rendered, &mut pingpong_set);
+                    let glyph_instance = GlyphInstance {
+                        atlas_page: atlas_idx,
+                        uv_box: todo!(),
+                        position_box: todo!(),
+                        user_data,
+                    };
+                } else {
+                    todo!();
 
-            // 3
-            // render
-            for (glyph, cached_glyph) in render_in_this_batch {
-                todo!()
+                    self.cache.new_batch();
+                }
             }
         }
     }

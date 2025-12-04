@@ -61,6 +61,14 @@ mod cache_state {
             self.current_batch_id = self.current_batch_id.wrapping_add(1);
         }
 
+        pub fn get_or_push_and_protect(&mut self, glyph_id: &GlyphId) -> Option<usize> {
+            if let Some(&idx) = self.lru_map.get(glyph_id) {
+                todo!()
+            } else {
+                todo!()
+            }
+        }
+
         pub fn get_and_protect_entry(&mut self, glyph_id: &GlyphId) -> Option<usize> {
             if let Some(&idx) = self.lru_map.get(glyph_id) {
                 // update last used frame
@@ -76,10 +84,7 @@ mod cache_state {
             }
         }
 
-        pub fn get_and_push_with_evicting_unprotected(
-            &mut self,
-            glyph_id: &GlyphId,
-        ) -> Option<usize> {
+        pub fn push_and_evicting_unprotected(&mut self, glyph_id: &GlyphId) -> Option<usize> {
             if let Some(tail_idx) = self.lru_tail {
                 let tail_node = &mut self.lru_nodes[tail_idx];
                 if tail_node.last_used_batch_id == self.current_batch_id {
@@ -270,9 +275,7 @@ impl CacheAtlas {
     }
 
     fn get_and_push_with_evicting_unprotected(&mut self, glyph_id: &GlyphId) -> Option<[usize; 2]> {
-        let index = self
-            .cache_state
-            .get_and_push_with_evicting_unprotected(glyph_id)?;
+        let index = self.cache_state.push_and_evicting_unprotected(glyph_id)?;
         let x = (index % self.tiles_per_axis) * self.tile_size;
         let y = (index / self.tiles_per_axis) * self.tile_size;
         Some([x, y])
@@ -334,6 +337,14 @@ impl GlyphCache {
         }
     }
 
+    pub fn get_or_push_and_protect(
+        &mut self,
+        glyph_id: &GlyphId,
+        font_storage: &mut FontStorage,
+    ) -> Option<GlyphCacheItem> {
+        todo!()
+    }
+
     pub fn get_and_protect_entry(
         &mut self,
         glyph_id: &GlyphId,
@@ -368,7 +379,7 @@ impl GlyphCache {
         })
     }
 
-    pub fn get_and_push_with_evicting_unprotected(
+    pub fn push_and_evicting_unprotected(
         &mut self,
         glyph_id: &GlyphId,
         font_storage: &mut FontStorage,
