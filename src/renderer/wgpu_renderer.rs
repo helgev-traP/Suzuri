@@ -42,29 +42,36 @@ struct Globals {
 
 pub struct WgpuRenderer {
     pub gpu_renderer: GpuRenderer,
+    resources: WgpuResources,
+}
+
+struct WgpuResources {
     device: Arc<wgpu::Device>,
-    queue: Arc<wgpu::Queue>,
     pipeline: wgpu::RenderPipeline,
     standalone_pipeline: wgpu::RenderPipeline,
     atlas_texture: wgpu::Texture,
-    atlas_view: wgpu::TextureView,
     sampler: wgpu::Sampler,
     instance_buffer: std::cell::RefCell<wgpu::Buffer>,
-    instance_capacity: std::cell::Cell<usize>,
-    bind_group_layout: wgpu::BindGroupLayout,
+    _bind_group_layout: wgpu::BindGroupLayout,
     standalone_bind_group_layout: wgpu::BindGroupLayout,
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
+    standalone_resources: std::cell::RefCell<Option<StandaloneResources>>,
 }
 
-const SHADER: &str = include_str!("wgpu_renderer_shader.wgsl");
+struct StandaloneResources {
+    texture: wgpu::Texture,
+    bind_group: wgpu::BindGroup,
+    size: wgpu::Extent3d,
+}
 
-const STANDALONE_SHADER: &str = include_str!("wgpu_renderer_standalone.wgsl");
+const SHADER: &str = include_str!("wgpu_renderer/wgpu_renderer_shader.wgsl");
+
+const STANDALONE_SHADER: &str = include_str!("wgpu_renderer/wgpu_renderer_standalone.wgsl");
 
 impl WgpuRenderer {
     pub fn new(
         device: Arc<wgpu::Device>,
-        queue: Arc<wgpu::Queue>,
         configs: Vec<GlyphAtlasConfig>,
         format: wgpu::TextureFormat,
     ) -> Self {
@@ -240,7 +247,7 @@ impl WgpuRenderer {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[instance_buffer_layout.clone()],
+                buffers: std::slice::from_ref(&instance_buffer_layout),
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -336,21 +343,23 @@ impl WgpuRenderer {
             ],
         });
 
-        Self {
-            gpu_renderer,
+        let resources = WgpuResources {
             device,
-            queue,
             pipeline,
             standalone_pipeline,
             atlas_texture,
-            atlas_view,
             sampler,
             instance_buffer: std::cell::RefCell::new(instance_buffer),
-            instance_capacity: std::cell::Cell::new(instance_capacity),
-            bind_group_layout,
+            _bind_group_layout: bind_group_layout,
             standalone_bind_group_layout,
             globals_buffer,
             globals_bind_group,
+            standalone_resources: std::cell::RefCell::new(None),
+        };
+
+        Self {
+            gpu_renderer,
+            resources,
         }
     }
 
@@ -362,17 +371,29 @@ impl WgpuRenderer {
         encoder: &mut wgpu::CommandEncoder,
         screen_size: [f32; 2],
     ) {
+        // Reset offset at the beginning of the frame
+        let current_offset = std::cell::Cell::new(0);
+
         // Update globals
         let globals = Globals {
             screen_size,
             _padding: [0.0; 2],
         };
-        self.queue
-            .write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(&globals));
-
-        let device = &self.device;
-        let queue = &self.queue;
-        let atlas_texture = &self.atlas_texture;
+        let globals_staging_buffer =
+            self.resources
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Globals Staging Buffer"),
+                    contents: bytemuck::bytes_of(&globals),
+                    usage: wgpu::BufferUsages::COPY_SRC,
+                });
+        encoder.copy_buffer_to_buffer(
+            &globals_staging_buffer,
+            0,
+            &self.resources.globals_buffer,
+            0,
+            std::mem::size_of::<Globals>() as u64,
+        );
 
         let encoder_cell = std::cell::RefCell::new(encoder);
 
@@ -380,214 +401,398 @@ impl WgpuRenderer {
             layout,
             font_storage,
             &mut |updates: Vec<AtlasUpdate>| {
-                for update in updates {
-                    queue.write_texture(
-                        wgpu::TexelCopyTextureInfo {
-                            texture: atlas_texture,
-                            mip_level: 0,
-                            origin: wgpu::Origin3d {
-                                x: update.x as u32,
-                                y: update.y as u32,
-                                z: update.texture_index as u32,
-                            },
-                            aspect: wgpu::TextureAspect::All,
-                        },
-                        &update.pixels,
-                        wgpu::TexelCopyBufferLayout {
-                            offset: 0,
-                            bytes_per_row: Some(update.width as u32),
-                            rows_per_image: Some(update.height as u32),
-                        },
-                        wgpu::Extent3d {
-                            width: update.width as u32,
-                            height: update.height as u32,
-                            depth_or_array_layers: 1,
-                        },
-                    );
-                }
+                self.resources
+                    .update_atlas(&mut encoder_cell.borrow_mut(), updates);
             },
             &mut |instances: Vec<GlyphInstance<T>>| {
-                if instances.is_empty() {
-                    return;
-                }
-
-                // Resize buffer if needed
-                if instances.len() > self.instance_capacity.get() {
-                    self.instance_capacity
-                        .set(instances.len().next_power_of_two());
-                    *self.instance_buffer.borrow_mut() =
-                        device.create_buffer(&wgpu::BufferDescriptor {
-                            label: Some("Instance Buffer"),
-                            size: (self.instance_capacity.get()
-                                * std::mem::size_of::<InstanceData>())
-                                as u64,
-                            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                            mapped_at_creation: false,
-                        });
-                }
-
-                let instance_data: Vec<InstanceData> = instances
-                    .iter()
-                    .map(|inst| InstanceData {
-                        screen_rect: [
-                            inst.screen_rect.min.x,
-                            inst.screen_rect.min.y,
-                            inst.screen_rect.width(),
-                            inst.screen_rect.height(),
-                        ],
-                        uv_rect: [
-                            inst.uv_rect.min.x,
-                            inst.uv_rect.min.y,
-                            inst.uv_rect.width(),
-                            inst.uv_rect.height(),
-                        ],
-                        color: inst.user_data.to_color(),
-                        layer: inst.texture_index as u32,
-                        _padding: [0; 3],
-                    })
-                    .collect();
-
-                queue.write_buffer(
-                    &self.instance_buffer.borrow(),
-                    0,
-                    bytemuck::cast_slice(&instance_data),
+                self.resources.draw_instances(
+                    &mut encoder_cell.borrow_mut(),
+                    view,
+                    &current_offset,
+                    instances,
                 );
-
-                let mut encoder = encoder_cell.borrow_mut();
-                let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("Text Render Pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-
-                rpass.set_pipeline(&self.pipeline);
-                rpass.set_bind_group(0, &self.globals_bind_group, &[]);
-                rpass.set_vertex_buffer(
-                    0,
-                    self.instance_buffer.borrow().slice(
-                        0..(instance_data.len() * std::mem::size_of::<InstanceData>()) as u64,
-                    ),
-                );
-                rpass.draw(0..4, 0..instance_data.len() as u32);
             },
             &mut |standalone: StandaloneGlyph<T>| {
-                // Create temporary texture
-                let texture = device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("Standalone Glyph Texture"),
-                    size: wgpu::Extent3d {
-                        width: standalone.width as u32,
-                        height: standalone.height as u32,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::R8Unorm,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                    view_formats: &[],
-                });
-
-                queue.write_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    &standalone.pixels,
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(standalone.width as u32),
-                        rows_per_image: Some(standalone.height as u32),
-                    },
-                    wgpu::Extent3d {
-                        width: standalone.width as u32,
-                        height: standalone.height as u32,
-                        depth_or_array_layers: 1,
-                    },
+                self.resources.draw_standalone(
+                    &mut encoder_cell.borrow_mut(),
+                    view,
+                    &current_offset,
+                    standalone,
                 );
-
-                let view_resource = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-                // Create bind group for standalone
-                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("Standalone Bind Group"),
-                    layout: &self.standalone_bind_group_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: self.globals_buffer.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(&self.sampler),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::TextureView(&view_resource),
-                        },
-                    ],
-                });
-
-                // Instance data for standalone
-                let instance_data = InstanceData {
-                    screen_rect: [
-                        standalone.screen_rect.min.x,
-                        standalone.screen_rect.min.y,
-                        standalone.screen_rect.width(),
-                        standalone.screen_rect.height(),
-                    ],
-                    uv_rect: [0.0, 0.0, 1.0, 1.0],
-                    color: standalone.user_data.to_color(),
-                    layer: 0,
-                    _padding: [0; 3],
-                };
-
-                // Use the main instance buffer? Or a temp one?
-                // Just write to the start of the instance buffer.
-                queue.write_buffer(
-                    &self.instance_buffer.borrow(),
-                    0,
-                    bytemuck::bytes_of(&instance_data),
-                );
-
-                let mut encoder = encoder_cell.borrow_mut();
-                let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("Standalone Render Pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-
-                rpass.set_pipeline(&self.standalone_pipeline);
-                rpass.set_bind_group(0, &bind_group, &[]);
-                rpass.set_vertex_buffer(
-                    0,
-                    self.instance_buffer
-                        .borrow()
-                        .slice(0..std::mem::size_of::<InstanceData>() as u64),
-                );
-                rpass.draw(0..4, 0..1);
             },
         );
+    }
+}
+
+impl WgpuResources {
+    fn update_atlas(&self, encoder: &mut wgpu::CommandEncoder, updates: Vec<AtlasUpdate>) {
+        for update in updates {
+            let width = update.width as u32;
+            let height = update.height as u32;
+
+            if width == 0 || height == 0 {
+                continue;
+            }
+
+            let bytes_per_row = width;
+            let padded_bytes_per_row = (bytes_per_row + 255) & !255;
+            let padding = padded_bytes_per_row - bytes_per_row;
+
+            let data = if padding == 0 {
+                std::borrow::Cow::Borrowed(&update.pixels)
+            } else {
+                let mut padded = Vec::with_capacity((padded_bytes_per_row * height) as usize);
+                for row in 0..height {
+                    let src_start = (row * width) as usize;
+                    let src_end = src_start + width as usize;
+                    if src_end <= update.pixels.len() {
+                        padded.extend_from_slice(&update.pixels[src_start..src_end]);
+                        padded.extend(std::iter::repeat_n(0, padding as usize));
+                    }
+                }
+                std::borrow::Cow::Owned(padded)
+            };
+
+            let staging_buffer =
+                self.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Atlas Staging Buffer"),
+                        contents: &data,
+                        usage: wgpu::BufferUsages::COPY_SRC,
+                    });
+
+            encoder.copy_buffer_to_texture(
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &staging_buffer,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(padded_bytes_per_row),
+                        rows_per_image: Some(height),
+                    },
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.atlas_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: update.x as u32,
+                        y: update.y as u32,
+                        z: update.texture_index as u32,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+    }
+
+    fn draw_instances<T: ToInstance + Copy>(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        current_offset: &std::cell::Cell<u64>,
+        instances: Vec<GlyphInstance<T>>,
+    ) {
+        if instances.is_empty() {
+            return;
+        }
+
+        let mut instance_buffer = self.instance_buffer.borrow_mut();
+
+        let instance_data: Vec<InstanceData> = instances
+            .iter()
+            .map(|inst| InstanceData {
+                screen_rect: [
+                    inst.screen_rect.min.x,
+                    inst.screen_rect.min.y,
+                    inst.screen_rect.width(),
+                    inst.screen_rect.height(),
+                ],
+                uv_rect: [
+                    inst.uv_rect.min.x,
+                    inst.uv_rect.min.y,
+                    inst.uv_rect.width(),
+                    inst.uv_rect.height(),
+                ],
+                color: inst.user_data.to_color(),
+                layer: inst.texture_index as u32,
+                _padding: [0; 3],
+            })
+            .collect();
+
+        let instance_size = std::mem::size_of::<InstanceData>() as u64;
+        let current_capacity = instance_buffer.size();
+        let needed_bytes = current_offset.get() + instance_data.len() as u64 * instance_size;
+
+        if needed_bytes > current_capacity {
+            let new_capacity = needed_bytes.max(current_capacity * 2);
+            let new_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Instance Buffer"),
+                size: new_capacity,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            *instance_buffer = new_buffer;
+        }
+
+        let offset = current_offset.get();
+        let bytes = bytemuck::cast_slice(&instance_data);
+
+        let staging_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Instance Staging Buffer"),
+                contents: bytes,
+                usage: wgpu::BufferUsages::COPY_SRC,
+            });
+
+        encoder.copy_buffer_to_buffer(
+            &staging_buffer,
+            0,
+            &instance_buffer,
+            offset,
+            bytes.len() as u64,
+        );
+
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Text Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        rpass.set_pipeline(&self.pipeline);
+        rpass.set_bind_group(0, &self.globals_bind_group, &[]);
+        rpass.set_vertex_buffer(
+            0,
+            instance_buffer.slice(offset..offset + bytes.len() as u64),
+        );
+        rpass.draw(0..4, 0..instance_data.len() as u32);
+
+        current_offset.set(offset + bytes.len() as u64);
+    }
+
+    fn draw_standalone<T: ToInstance + Copy>(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        current_offset: &std::cell::Cell<u64>,
+        standalone: StandaloneGlyph<T>,
+    ) {
+        let mut resources_ref = self.standalone_resources.borrow_mut();
+        let mut instance_buffer = self.instance_buffer.borrow_mut();
+
+        let needed_width = standalone.width as u32;
+        let needed_height = standalone.height as u32;
+
+        let mut recreate = false;
+        if let Some(res) = resources_ref.as_ref() {
+            if res.size.width < needed_width || res.size.height < needed_height {
+                recreate = true;
+            }
+        } else {
+            recreate = true;
+        }
+
+        if recreate {
+            let current_size = resources_ref
+                .as_ref()
+                .map(|r| r.size)
+                .unwrap_or(wgpu::Extent3d {
+                    width: 0,
+                    height: 0,
+                    depth_or_array_layers: 1,
+                });
+            let new_width = current_size.width.max(needed_width);
+            let new_height = current_size.height.max(needed_height);
+
+            let size = wgpu::Extent3d {
+                width: new_width,
+                height: new_height,
+                depth_or_array_layers: 1,
+            };
+
+            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Standalone Glyph Texture"),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Standalone Bind Group"),
+                layout: &self.standalone_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.globals_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                ],
+            });
+
+            *resources_ref = Some(StandaloneResources {
+                texture,
+                bind_group,
+                size,
+            });
+        }
+
+        let resources = resources_ref.as_ref().unwrap();
+
+        // Prepare data with 256-byte alignment for copy_buffer_to_texture
+        let width = standalone.width as u32;
+        let height = standalone.height as u32;
+        let bytes_per_row = width;
+        let padded_bytes_per_row = (bytes_per_row + 255) & !255;
+        let padding = padded_bytes_per_row - bytes_per_row;
+
+        let data = if padding == 0 {
+            std::borrow::Cow::Borrowed(&standalone.pixels)
+        } else {
+            let mut padded = Vec::with_capacity((padded_bytes_per_row * height) as usize);
+            for row in 0..height {
+                let src_start = (row * width) as usize;
+                let src_end = src_start + width as usize;
+                padded.extend_from_slice(&standalone.pixels[src_start..src_end]);
+                padded.extend(std::iter::repeat_n(0, padding as usize));
+            }
+            std::borrow::Cow::Owned(padded)
+        };
+
+        let staging_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Standalone Staging Buffer"),
+                contents: &data,
+                usage: wgpu::BufferUsages::COPY_SRC,
+            });
+
+        encoder.copy_buffer_to_texture(
+            wgpu::TexelCopyBufferInfo {
+                buffer: &staging_buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: &resources.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        // UV calculation
+        let u_max = standalone.width as f32 / resources.size.width as f32;
+        let v_max = standalone.height as f32 / resources.size.height as f32;
+
+        // Instance data for standalone
+        let instance_data = InstanceData {
+            screen_rect: [
+                standalone.screen_rect.min.x,
+                standalone.screen_rect.min.y,
+                standalone.screen_rect.width(),
+                standalone.screen_rect.height(),
+            ],
+            uv_rect: [0.0, 0.0, u_max, v_max],
+            color: standalone.user_data.to_color(),
+            layer: 0,
+            _padding: [0; 3],
+        };
+
+        // Use the shared instance buffer for standalone glyphs too
+        let instance_size = std::mem::size_of::<InstanceData>() as u64;
+        let current_capacity = instance_buffer.size();
+        let needed_bytes = current_offset.get() + instance_size;
+
+        if needed_bytes > current_capacity {
+            let new_capacity = needed_bytes.max(current_capacity * 2);
+            let new_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Instance Buffer"),
+                size: new_capacity,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            *instance_buffer = new_buffer;
+        }
+
+        let offset = current_offset.get();
+        let bytes = bytemuck::bytes_of(&instance_data);
+
+        let staging_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Standalone Instance Staging Buffer"),
+                contents: bytes,
+                usage: wgpu::BufferUsages::COPY_SRC,
+            });
+
+        encoder.copy_buffer_to_buffer(
+            &staging_buffer,
+            0,
+            &instance_buffer,
+            offset,
+            bytes.len() as u64,
+        );
+
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Standalone Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        rpass.set_pipeline(&self.standalone_pipeline);
+        rpass.set_bind_group(0, &resources.bind_group, &[]);
+        rpass.set_vertex_buffer(
+            0,
+            instance_buffer.slice(offset..offset + bytes.len() as u64),
+        );
+        rpass.draw(0..4, 0..1);
+
+        current_offset.set(offset + bytes.len() as u64);
     }
 }

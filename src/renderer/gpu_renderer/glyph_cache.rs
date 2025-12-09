@@ -5,6 +5,8 @@ use std::num::NonZeroUsize;
 use crate::font_storage::FontStorage;
 use crate::glyph_id::GlyphId;
 
+const ATLAS_MARGIN: usize = 2;
+
 /// protect `push_front`, `move_to_front` and `attach_to_head` from incorrect usage.
 mod cache_state {
     use super::*;
@@ -444,7 +446,7 @@ impl FixedGlyphCache {
 
         let font = font_storage.font(font_id)?;
         let glyph_metrics = font.metrics_indexed(glyph_index, font_size);
-        let glyph_bitmap_size = glyph_metrics.width.max(glyph_metrics.height);
+        let glyph_bitmap_size = glyph_metrics.width.max(glyph_metrics.height) + ATLAS_MARGIN;
 
         let cache_index = self
             .caches
@@ -481,7 +483,7 @@ impl FixedGlyphCache {
 
         let font = font_storage.font(font_id)?;
         let glyph_metrics = font.metrics_indexed(glyph_index, font_size);
-        let glyph_bitmap_size = glyph_metrics.width.max(glyph_metrics.height);
+        let glyph_bitmap_size = glyph_metrics.width.max(glyph_metrics.height) + ATLAS_MARGIN;
 
         let cache_index = self
             .caches
@@ -515,7 +517,7 @@ impl FixedGlyphCache {
 
         let font = font_storage.font(font_id)?;
         let glyph_metrics = font.metrics_indexed(glyph_index, font_size);
-        let glyph_bitmap_size = glyph_metrics.width.max(glyph_metrics.height);
+        let glyph_bitmap_size = glyph_metrics.width.max(glyph_metrics.height) + ATLAS_MARGIN;
 
         let cache_index = self
             .caches
@@ -578,7 +580,7 @@ impl FallbackGlyphCache {
 
         let font = font_storage.font(font_id)?;
         let glyph_metrics = font.metrics_indexed(glyph_index, font_size);
-        let glyph_bitmap_size = glyph_metrics.width.max(glyph_metrics.height);
+        let glyph_bitmap_size = glyph_metrics.width.max(glyph_metrics.height) + ATLAS_MARGIN;
 
         let start_index = self
             .caches
@@ -650,7 +652,7 @@ impl FallbackGlyphCache {
 
         let font = font_storage.font(font_id)?;
         let glyph_metrics = font.metrics_indexed(glyph_index, font_size);
-        let glyph_bitmap_size = glyph_metrics.width.max(glyph_metrics.height);
+        let glyph_bitmap_size = glyph_metrics.width.max(glyph_metrics.height) + ATLAS_MARGIN;
 
         let start_index = self
             .caches
@@ -688,7 +690,7 @@ impl FallbackGlyphCache {
 
         let font = font_storage.font(font_id)?;
         let glyph_metrics = font.metrics_indexed(glyph_index, font_size);
-        let glyph_bitmap_size = glyph_metrics.width.max(glyph_metrics.height);
+        let glyph_bitmap_size = glyph_metrics.width.max(glyph_metrics.height) + ATLAS_MARGIN;
 
         let start_index = self
             .caches

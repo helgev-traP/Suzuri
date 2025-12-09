@@ -18,6 +18,8 @@ wgpu = ["dep:wgpu", "dep:nalgebra"]
 
 [dev-dependencies]
 image = "0.25.8"
+pollster = "0.4.0"
+wgpu = "27.0.1"
 
 [lints.clippy]
 unwrap-used = "warn"
