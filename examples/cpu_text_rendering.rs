@@ -1,100 +1,37 @@
-use std::collections::HashSet;
 use std::num::NonZeroUsize;
 
-use fxhash::FxBuildHasher;
-use image::{ImageBuffer, Luma};
+use image::{ImageBuffer, Rgb};
 use wgfont::{
     font_storage::FontStorage,
-    fontdb::{self, Family, Query},
-    renderer::{CpuRenderer, cpu_renderer::GlyphCache, debug_renderer::Bitmap},
-    text::{HorizontalAlign, TextData, TextElement, TextLayoutConfig, VerticalAlign, WrapStyle},
+    renderer::{CpuRenderer, cpu_renderer::GlyphCache},
 };
 
-fn make_config(max_width: Option<f32>, max_height: Option<f32>) -> TextLayoutConfig {
-    let mut word_separators: HashSet<char, FxBuildHasher> =
-        HashSet::with_hasher(FxBuildHasher::default());
-    word_separators.insert(' ');
-    word_separators.insert('\t');
-    word_separators.insert(',');
-    word_separators.insert('.');
-
-    let mut linebreak_char: HashSet<char, FxBuildHasher> =
-        HashSet::with_hasher(FxBuildHasher::default());
-    linebreak_char.insert('\n');
-
-    TextLayoutConfig {
-        max_width,
-        max_height,
-        horizontal_align: HorizontalAlign::Left,
-        vertical_align: VerticalAlign::Top,
-        line_height_scale: 1.0,
-        wrap_style: WrapStyle::WordWrap,
-        wrap_hard_break: true,
-        word_separators,
-        linebreak_char,
-    }
-}
-
-fn pick_system_font(font_storage: &mut FontStorage) -> fontdb::ID {
-    font_storage.load_system_fonts();
-    assert!(
-        !font_storage.is_empty(),
-        "system fonts are required for the text layout test"
-    );
-
-    const FAMILIES: &[Family<'_>] = &[Family::SansSerif];
-    let query = Query {
-        families: FAMILIES,
-        weight: fontdb::Weight::NORMAL,
-        stretch: fontdb::Stretch::Normal,
-        style: fontdb::Style::Normal,
-    };
-
-    if let Some((font_id, _)) = font_storage.query(&query) {
-        return font_id;
-    }
-
-    font_storage
-        .faces()
-        .next()
-        .map(|face| face.id)
-        .expect("no usable fonts registered in FontStorage")
-}
+mod example_common;
+use example_common::{TextColor, WIDTH, build_text_data, load_fonts, make_layout_config};
 
 #[allow(clippy::unwrap_used)]
 fn main() {
-    let config = {
-        let max_width = Some(400.0);
-        let max_height = None;
-        make_config(max_width, max_height)
-    };
+    let config = make_layout_config(Some(WIDTH), None);
 
     let mut font_storage = FontStorage::new();
-    let font_id = pick_system_font(&mut font_storage);
-
-    let mut data = TextData::new();
-    data.append(TextElement {
-        font_id,
-        font_size: 32.0,
-        content: "CpuRenderer text rendering example.\n\
-                  This text is rendered using the CPU renderer with a glyph cache.\n\
-                  It supports caching and reuse of rasterized glyphs."
-            .into(),
-        user_data: (),
-    });
+    let (heading_font, body_font, mono_font) = load_fonts(&mut font_storage);
+    let data = build_text_data(heading_font, body_font, mono_font);
 
     // Layout
+    let layout_timer = std::time::Instant::now();
     let layout = data.layout(&config, &mut font_storage);
+    let layout_elapsed = layout_timer.elapsed();
 
     println!(
-        "Layout: total_width={} total_height={} lines={}",
+        "Layout: {:.2}x{:.2} lines={} (elapsed: {:.2?})",
         layout.total_width,
         layout.total_height,
-        layout.lines.len()
+        layout.lines.len(),
+        layout_elapsed
     );
 
-    let bitmap_width = config.max_width.unwrap_or(layout.total_width).ceil() as usize;
-    let bitmap_height = config.max_height.unwrap_or(layout.total_height).ceil() as usize;
+    let bitmap_width = WIDTH.ceil() as usize;
+    let bitmap_height = layout.total_height.ceil() as usize;
 
     // Initialize CpuRenderer
     let cache_config = [
@@ -111,36 +48,82 @@ fn main() {
     let mut renderer = CpuRenderer::new(cache);
 
     // Render
-    let timer = std::time::Instant::now();
-    let mut bitmap = Bitmap::new(bitmap_width, bitmap_height);
-    renderer.render(
-        &layout,
-        [bitmap_width, bitmap_height],
-        &mut font_storage,
-        &mut |pos, alpha, _| bitmap.accumulate(pos[0], pos[1], alpha),
-    );
-    let elapsed = timer.elapsed();
+    // Note: CPU renderer is Grayscale-only (coverage), so we'll render to a colored image manually
+    // by blending the text color with the coverage.
+    let mut image_buffer: ImageBuffer<Rgb<u8>, Vec<u8>> =
+        ImageBuffer::from_pixel(bitmap_width as u32, bitmap_height as u32, Rgb([20, 20, 25])); // Dark background
+
+    let mut measurements = Vec::new();
+    for i in 0..2 {
+        let timer = std::time::Instant::now();
+        // Reset buffer for the first pass (optional, but cleaner) or just draw over.
+        // We just draw over to avoid re-allocation or heavy clear costs affecting the benchmark if included (though we measure inside loop).
+        // Actually, let's just draw.
+        // Note: The second pass will blend onto the first pass result, making it brighter/messier, but timing is what matters.
+
+        renderer.render(
+            &layout,
+            [bitmap_width, bitmap_height],
+            &mut font_storage,
+            &mut |pos, alpha, color: &TextColor| {
+                let alpha_f = alpha as f32 / 255.0;
+                if alpha_f <= 0.0 {
+                    return;
+                }
+                let x = pos[0] as u32;
+                let y = pos[1] as u32;
+                if x >= bitmap_width as u32 || y >= bitmap_height as u32 {
+                    return;
+                }
+
+                let pixel = image_buffer.get_pixel_mut(x, y);
+                let bg_r = pixel[0] as f32 / 255.0;
+                let bg_g = pixel[1] as f32 / 255.0;
+                let bg_b = pixel[2] as f32 / 255.0;
+
+                // Simple alpha blending
+                let out_r = color.r * alpha_f + bg_r * (1.0 - alpha_f);
+                let out_g = color.g * alpha_f + bg_g * (1.0 - alpha_f);
+                let out_b = color.b * alpha_f + bg_b * (1.0 - alpha_f);
+
+                *pixel = Rgb([
+                    (out_r.clamp(0.0, 1.0) * 255.0) as u8,
+                    (out_g.clamp(0.0, 1.0) * 255.0) as u8,
+                    (out_b.clamp(0.0, 1.0) * 255.0) as u8,
+                ]);
+            },
+        );
+        measurements.push(timer.elapsed());
+        if i == 0 {
+            // For the sake of the output image quality, we might want to clear it if we were saving the result of the second pass.
+            // But we are saving whatever is in image_buffer at the end.
+            // If we don't clear, the image is double-drawn.
+            // For debugging purposes, let's clear it so the saved image is correct (from the 2nd pass).
+            // We won't include this clear in the timing.
+            image_buffer = ImageBuffer::from_pixel(
+                bitmap_width as u32,
+                bitmap_height as u32,
+                Rgb([20, 20, 25]),
+            );
+        }
+    }
 
     println!(
-        "Rendered image: width={} height={} (elapsed: {:.2?})",
-        bitmap.width, bitmap.height, elapsed
+        "Render (1st): {}x{} (elapsed: {:.2?})",
+        bitmap_width, bitmap_height, measurements[0]
     );
-
-    if bitmap.width == 0 || bitmap.height == 0 {
-        println!("Bitmap is empty; nothing to write.");
-        return;
-    }
+    println!(
+        "Render (2nd): {}x{} (elapsed: {:.2?})",
+        bitmap_width, bitmap_height, measurements[1]
+    );
 
     // Ensure debug directory exists
     std::fs::create_dir_all("debug").expect("failed to create debug directory");
 
-    let img_buffer: ImageBuffer<Luma<u8>, Vec<u8>> =
-        ImageBuffer::from_raw(bitmap.width as u32, bitmap.height as u32, bitmap.pixels)
-            .expect("bitmap dimensions must match pixel buffer length");
-
-    img_buffer
-        .save("debug/cpu_renderer_text.png")
+    let output_path = "debug/cpu_renderer_text.png";
+    image_buffer
+        .save(output_path)
         .expect("failed to save debug image");
 
-    println!("Saved debug image to debug/cpu_renderer_text.png");
+    println!("Saved: {}", output_path);
 }
