@@ -1,10 +1,7 @@
 use std::num::NonZeroUsize;
 
 use image::{ImageBuffer, Rgb};
-use wgfont::{
-    font_storage::FontStorage,
-    renderer::{CpuRenderer, cpu_renderer::GlyphCache},
-};
+use wgfont::{font_storage::FontStorage, renderer::CpuRenderer};
 
 mod example_common;
 use example_common::{TextColor, WIDTH, build_text_data, load_fonts, make_layout_config};
@@ -35,17 +32,16 @@ fn main() {
 
     // Initialize CpuRenderer
     let cache_config = [
-        (
-            NonZeroUsize::new(1024).unwrap(), // Block size (e.g. 32x32)
-            NonZeroUsize::new(1024).unwrap(), // Capacity
-        ),
-        (
-            NonZeroUsize::new(4096).unwrap(), // Block size (e.g. 64x64)
-            NonZeroUsize::new(256).unwrap(),  // Capacity
-        ),
+        wgfont::renderer::cpu_renderer::CpuCacheConfig {
+            block_size: NonZeroUsize::new(1024).unwrap(), // Block size (e.g. 32x32)
+            capacity: NonZeroUsize::new(1024).unwrap(),   // Capacity
+        },
+        wgfont::renderer::cpu_renderer::CpuCacheConfig {
+            block_size: NonZeroUsize::new(4096).unwrap(), // Block size (e.g. 64x64)
+            capacity: NonZeroUsize::new(256).unwrap(),    // Capacity
+        },
     ];
-    let cache = GlyphCache::new(&cache_config);
-    let mut renderer = CpuRenderer::new(cache);
+    let mut renderer = CpuRenderer::new(&cache_config);
 
     // Render
     // Note: CPU renderer is Grayscale-only (coverage), so we'll render to a colored image manually

@@ -3,17 +3,19 @@ mod glyph_cache;
 use crate::font_storage::FontStorage;
 use crate::text::{GlyphPosition, TextLayout};
 
-pub use glyph_cache::{GlyphCache, GlyphCacheItem};
+pub use glyph_cache::{CpuCache, CpuCacheConfig, CpuCacheItem};
 
 /// CPU-based renderer that rasterizes glyphs using a cache.
 pub struct CpuRenderer {
-    cache: GlyphCache,
+    cache: CpuCache,
 }
 
 impl CpuRenderer {
     /// Creates a renderer from the provided cache.
-    pub fn new(cache: GlyphCache) -> Self {
-        Self { cache }
+    pub fn new(configs: &[CpuCacheConfig]) -> Self {
+        Self {
+            cache: CpuCache::new(configs),
+        }
     }
 
     pub fn clear_cache(&mut self) {
@@ -62,7 +64,7 @@ impl CpuRenderer {
                     glyph_pos.glyph_id.glyph_index(),
                     glyph_pos.glyph_id.font_size(),
                 );
-                GlyphCacheItem {
+                CpuCacheItem {
                     width: metrics.width,
                     height: metrics.height,
                     data: std::borrow::Cow::Owned(bitmap),

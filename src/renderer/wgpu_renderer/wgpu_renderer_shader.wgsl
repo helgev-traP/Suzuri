@@ -37,7 +37,7 @@ fn vs_main(model: VertexInput, instance: InstanceInput) -> VertexOutput {
     // screen_pos is in pixels (0 to width, 0 to height)
     // x: 0..w -> -1..1 => x / w * 2 - 1
     // y: 0..h -> 1..-1 => -(y / h * 2 - 1) = 1 - y / h * 2
-    
+
     let clip_x = (screen_pos.x / globals.screen_size.x) * 2.0 - 1.0;
     let clip_y = 1.0 - (screen_pos.y / globals.screen_size.y) * 2.0;
 
@@ -52,5 +52,5 @@ fn vs_main(model: VertexInput, instance: InstanceInput) -> VertexOutput {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let alpha = textureSample(font_texture, font_sampler, in.tex_coords, i32(in.layer)).r;
-    return vec4<f32>(in.color.rgb, in.color.a * alpha);
+    return in.color * alpha;
 }

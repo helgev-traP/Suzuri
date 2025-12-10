@@ -3,7 +3,7 @@ use std::num::NonZeroUsize;
 use image::{ImageBuffer, Rgba};
 use wgfont::{
     font_storage::FontStorage,
-    renderer::{gpu_renderer::GlyphAtlasConfig, wgpu_renderer::WgpuRenderer},
+    renderer::{gpu_renderer::GpuCacheConfig, wgpu_renderer::WgpuRenderer},
 };
 
 mod example_common;
@@ -49,12 +49,12 @@ async fn run() {
     // 2. Setup WgpuRenderer
     #[allow(clippy::unwrap_used)]
     let configs = vec![
-        GlyphAtlasConfig {
+        GpuCacheConfig {
             tile_size: NonZeroUsize::new(32).unwrap(),
             tiles_per_axis: NonZeroUsize::new(16).unwrap(),
             texture_size: NonZeroUsize::new(512).unwrap(),
         },
-        GlyphAtlasConfig {
+        GpuCacheConfig {
             tile_size: NonZeroUsize::new(64).unwrap(),
             tiles_per_axis: NonZeroUsize::new(8).unwrap(),
             texture_size: NonZeroUsize::new(512).unwrap(),
@@ -62,7 +62,7 @@ async fn run() {
     ];
 
     let texture_format = wgpu::TextureFormat::Rgba8Unorm;
-    let mut renderer = WgpuRenderer::new(device.clone(), configs, texture_format);
+    let mut renderer = WgpuRenderer::new(&device, &configs, &[texture_format]);
 
     // 3. Setup Text Layout
     let config = make_layout_config(Some(WIDTH), None);
@@ -143,8 +143,9 @@ async fn run() {
         renderer.render(
             &layout,
             &mut font_storage,
-            &target_view,
+            &device,
             &mut encoder,
+            &target_view,
             [width as f32, height as f32],
         );
         measurements.push(start.elapsed());
