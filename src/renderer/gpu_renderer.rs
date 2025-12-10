@@ -6,7 +6,7 @@ use crate::{
 };
 
 mod glyph_cache;
-pub use glyph_cache::{CacheAtlas, GlyphAtlasConfig, GlyphCache, GlyphCacheItem};
+pub use glyph_cache::{CacheAtlas, GpuCache, GpuCacheConfig, GpuCacheItem};
 
 pub struct AtlasUpdate {
     pub texture_index: usize,
@@ -33,13 +33,13 @@ pub struct StandaloneGlyph<T> {
 }
 
 pub struct GpuRenderer {
-    cache: GlyphCache,
+    cache: GpuCache,
 }
 
 impl GpuRenderer {
-    pub fn new(configs: Vec<GlyphAtlasConfig>) -> Self {
+    pub fn new(configs: &[GpuCacheConfig]) -> Self {
         Self {
-            cache: GlyphCache::new(configs),
+            cache: GpuCache::new(configs),
         }
     }
 
@@ -72,7 +72,7 @@ impl GpuRenderer {
                 let metrics = font.metrics_indexed(glyph_id.glyph_index(), glyph_id.font_size());
 
                 let (
-                    GlyphCacheItem {
+                    GpuCacheItem {
                         texture_index,
                         texture_size,
                         glyph_box,

@@ -298,7 +298,7 @@ mod cache_state {
 }
 
 #[derive(Clone)]
-pub struct GlyphAtlasConfig {
+pub struct GpuCacheConfig {
     pub tile_size: NonZeroUsize,
     pub tiles_per_axis: NonZeroUsize,
     pub texture_size: NonZeroUsize,
@@ -319,7 +319,7 @@ impl CacheAtlas {
     /// - tile_size * tiles_per_axis > texture_size
     /// - texture_size^2 > usize::MAX
     #[allow(clippy::unwrap_used)]
-    fn new(config: GlyphAtlasConfig) -> Self {
+    fn new(config: &GpuCacheConfig) -> Self {
         if config.tile_size.get() * config.tiles_per_axis.get() > config.texture_size.get() {
             panic!("tile_size * tiles_per_axis > texture_size");
         }
@@ -372,13 +372,13 @@ impl CacheAtlas {
     }
 }
 
-pub struct GlyphCacheItem {
+pub struct GpuCacheItem {
     pub texture_index: usize,
     pub texture_size: usize,
     pub glyph_box: Box2D<usize, UnknownUnit>,
 }
 
-impl GlyphCacheItem {
+impl GpuCacheItem {
     pub const fn glyph_uv(&self) -> Box2D<f32, UnknownUnit> {
         let x_min = self.glyph_box.min.x;
         let x_max = self.glyph_box.max.x;
@@ -402,24 +402,24 @@ pub enum GetOrPushResult {
     NeedToUpload,
 }
 
-pub enum GlyphCacheStrategy {
+pub enum GpuCacheStrategy {
     Fixed,
     Fallback,
 }
 
-pub struct FixedGlyphCache {
+pub struct FixedGpuCache {
     /// must be sorted by tile size
     caches: Vec<CacheAtlas>,
 }
 
-impl FixedGlyphCache {
-    fn new(configs: Vec<GlyphAtlasConfig>) -> Self {
+impl FixedGpuCache {
+    fn new(configs: &[GpuCacheConfig]) -> Self {
         // sort by tile size
-        let mut configs = configs;
+        let mut configs = configs.to_vec();
         configs.sort_by_key(|config| config.tile_size.get());
 
         Self {
-            caches: configs.into_iter().map(CacheAtlas::new).collect(),
+            caches: configs.iter().map(CacheAtlas::new).collect(),
         }
     }
 
@@ -439,7 +439,7 @@ impl FixedGlyphCache {
         &mut self,
         glyph_id: &GlyphId,
         font_storage: &mut FontStorage,
-    ) -> Option<(GlyphCacheItem, GetOrPushResult)> {
+    ) -> Option<(GpuCacheItem, GetOrPushResult)> {
         let glyph_index = glyph_id.glyph_index();
         let font_size = glyph_id.font_size();
         let font_id = glyph_id.font_id();
@@ -463,7 +463,7 @@ impl FixedGlyphCache {
         let glyph_box = Box2D::new(Point2D::new(x_min, y_min), Point2D::new(x_max, y_max));
 
         Some((
-            GlyphCacheItem {
+            GpuCacheItem {
                 texture_index,
                 texture_size,
                 glyph_box,
@@ -476,7 +476,7 @@ impl FixedGlyphCache {
         &mut self,
         glyph_id: &GlyphId,
         font_storage: &mut FontStorage,
-    ) -> Option<GlyphCacheItem> {
+    ) -> Option<GpuCacheItem> {
         let glyph_index = glyph_id.glyph_index();
         let font_size = glyph_id.font_size();
         let font_id = glyph_id.font_id();
@@ -499,7 +499,7 @@ impl FixedGlyphCache {
 
         let glyph_box = Box2D::new(Point2D::new(x_min, y_min), Point2D::new(x_max, y_max));
 
-        Some(GlyphCacheItem {
+        Some(GpuCacheItem {
             texture_index,
             texture_size,
             glyph_box,
@@ -510,7 +510,7 @@ impl FixedGlyphCache {
         &mut self,
         glyph_id: &GlyphId,
         font_storage: &mut FontStorage,
-    ) -> Option<GlyphCacheItem> {
+    ) -> Option<GpuCacheItem> {
         let glyph_index = glyph_id.glyph_index();
         let font_size = glyph_id.font_size();
         let font_id = glyph_id.font_id();
@@ -533,7 +533,7 @@ impl FixedGlyphCache {
 
         let glyph_box = Box2D::new(Point2D::new(x_min, y_min), Point2D::new(x_max, y_max));
 
-        Some(GlyphCacheItem {
+        Some(GpuCacheItem {
             texture_index,
             texture_size,
             glyph_box,
@@ -541,19 +541,19 @@ impl FixedGlyphCache {
     }
 }
 
-pub struct FallbackGlyphCache {
+pub struct FallbackGpuCache {
     /// must be sorted by tile size
     caches: Vec<CacheAtlas>,
 }
 
-impl FallbackGlyphCache {
-    fn new(configs: Vec<GlyphAtlasConfig>) -> Self {
+impl FallbackGpuCache {
+    fn new(configs: &[GpuCacheConfig]) -> Self {
         // sort by tile size
-        let mut configs = configs;
+        let mut configs = configs.to_vec();
         configs.sort_by_key(|config| config.tile_size.get());
 
         Self {
-            caches: configs.into_iter().map(CacheAtlas::new).collect(),
+            caches: configs.iter().map(CacheAtlas::new).collect(),
         }
     }
 
@@ -573,7 +573,7 @@ impl FallbackGlyphCache {
         &mut self,
         glyph_id: &GlyphId,
         font_storage: &mut FontStorage,
-    ) -> Option<(GlyphCacheItem, GetOrPushResult)> {
+    ) -> Option<(GpuCacheItem, GetOrPushResult)> {
         let glyph_index = glyph_id.glyph_index();
         let font_size = glyph_id.font_size();
         let font_id = glyph_id.font_id();
@@ -598,7 +598,7 @@ impl FallbackGlyphCache {
                 let glyph_box = Box2D::new(Point2D::new(x_min, y_min), Point2D::new(x_max, y_max));
 
                 return Some((
-                    GlyphCacheItem {
+                    GpuCacheItem {
                         texture_index,
                         texture_size,
                         glyph_box,
@@ -628,7 +628,7 @@ impl FallbackGlyphCache {
                 let glyph_box = Box2D::new(Point2D::new(x_min, y_min), Point2D::new(x_max, y_max));
 
                 return Some((
-                    GlyphCacheItem {
+                    GpuCacheItem {
                         texture_index,
                         texture_size,
                         glyph_box,
@@ -645,7 +645,7 @@ impl FallbackGlyphCache {
         &mut self,
         glyph_id: &GlyphId,
         font_storage: &mut FontStorage,
-    ) -> Option<GlyphCacheItem> {
+    ) -> Option<GpuCacheItem> {
         let glyph_index = glyph_id.glyph_index();
         let font_size = glyph_id.font_size();
         let font_id = glyph_id.font_id();
@@ -668,7 +668,7 @@ impl FallbackGlyphCache {
                 let y_max = y_min + glyph_metrics.height;
                 let glyph_box = Box2D::new(Point2D::new(x_min, y_min), Point2D::new(x_max, y_max));
 
-                return Some(GlyphCacheItem {
+                return Some(GpuCacheItem {
                     texture_index,
                     texture_size,
                     glyph_box,
@@ -683,7 +683,7 @@ impl FallbackGlyphCache {
         &mut self,
         glyph_id: &GlyphId,
         font_storage: &mut FontStorage,
-    ) -> Option<GlyphCacheItem> {
+    ) -> Option<GpuCacheItem> {
         let glyph_index = glyph_id.glyph_index();
         let font_size = glyph_id.font_size();
         let font_id = glyph_id.font_id();
@@ -708,7 +708,7 @@ impl FallbackGlyphCache {
                 let y_max = y_min + glyph_metrics.height;
                 let glyph_box = Box2D::new(Point2D::new(x_min, y_min), Point2D::new(x_max, y_max));
 
-                return Some(GlyphCacheItem {
+                return Some(GpuCacheItem {
                     texture_index,
                     texture_size,
                     glyph_box,
@@ -720,21 +720,21 @@ impl FallbackGlyphCache {
     }
 }
 
-pub enum GlyphCache {
-    Fixed(FixedGlyphCache),
-    Fallback(FallbackGlyphCache),
+pub enum GpuCache {
+    Fixed(FixedGpuCache),
+    Fallback(FallbackGpuCache),
 }
 
-impl GlyphCache {
-    pub fn new(configs: Vec<GlyphAtlasConfig>) -> Self {
+impl GpuCache {
+    pub fn new(configs: &[GpuCacheConfig]) -> Self {
         // Default to Fallback strategy as requested for improvement
-        Self::Fallback(FallbackGlyphCache::new(configs))
+        Self::Fallback(FallbackGpuCache::new(configs))
     }
 
-    pub fn new_with_strategy(configs: Vec<GlyphAtlasConfig>, strategy: GlyphCacheStrategy) -> Self {
+    pub fn new_with_strategy(configs: &[GpuCacheConfig], strategy: GpuCacheStrategy) -> Self {
         match strategy {
-            GlyphCacheStrategy::Fixed => Self::Fixed(FixedGlyphCache::new(configs)),
-            GlyphCacheStrategy::Fallback => Self::Fallback(FallbackGlyphCache::new(configs)),
+            GpuCacheStrategy::Fixed => Self::Fixed(FixedGpuCache::new(configs)),
+            GpuCacheStrategy::Fallback => Self::Fallback(FallbackGpuCache::new(configs)),
         }
     }
 
@@ -756,7 +756,7 @@ impl GlyphCache {
         &mut self,
         glyph_id: &GlyphId,
         font_storage: &mut FontStorage,
-    ) -> Option<(GlyphCacheItem, GetOrPushResult)> {
+    ) -> Option<(GpuCacheItem, GetOrPushResult)> {
         match self {
             Self::Fixed(c) => c.get_or_push_and_protect(glyph_id, font_storage),
             Self::Fallback(c) => c.get_or_push_and_protect(glyph_id, font_storage),
@@ -767,7 +767,7 @@ impl GlyphCache {
         &mut self,
         glyph_id: &GlyphId,
         font_storage: &mut FontStorage,
-    ) -> Option<GlyphCacheItem> {
+    ) -> Option<GpuCacheItem> {
         match self {
             Self::Fixed(c) => c.get_and_protect_entry(glyph_id, font_storage),
             Self::Fallback(c) => c.get_and_protect_entry(glyph_id, font_storage),
@@ -778,7 +778,7 @@ impl GlyphCache {
         &mut self,
         glyph_id: &GlyphId,
         font_storage: &mut FontStorage,
-    ) -> Option<GlyphCacheItem> {
+    ) -> Option<GpuCacheItem> {
         match self {
             Self::Fixed(c) => c.push_and_evicting_unprotected(glyph_id, font_storage),
             Self::Fallback(c) => c.push_and_evicting_unprotected(glyph_id, font_storage),

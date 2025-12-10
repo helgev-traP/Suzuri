@@ -1,10 +1,10 @@
 use super::gpu_renderer::{
-    AtlasUpdate, GlyphAtlasConfig, GlyphInstance, GpuRenderer, StandaloneGlyph,
+    AtlasUpdate, GlyphInstance, GpuCacheConfig, GpuRenderer, StandaloneGlyph,
 };
 use crate::font_storage::FontStorage;
 use crate::text::TextLayout;
 use bytemuck::{Pod, Zeroable};
-use std::sync::Arc;
+use std::collections::HashMap;
 use wgpu::util::DeviceExt;
 
 #[repr(C)]
@@ -17,22 +17,6 @@ pub struct InstanceData {
     pub _padding: [u32; 3],
 }
 
-pub trait ToInstance {
-    fn to_color(&self) -> [f32; 4];
-}
-
-impl ToInstance for [f32; 4] {
-    fn to_color(&self) -> [f32; 4] {
-        *self
-    }
-}
-
-impl ToInstance for () {
-    fn to_color(&self) -> [f32; 4] {
-        [1.0, 1.0, 1.0, 1.0]
-    }
-}
-
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 struct Globals {
@@ -40,15 +24,76 @@ struct Globals {
     _padding: [f32; 2],
 }
 
+/// A text renderer using `wgpu` for hardware-accelerated rendering.
+///
+/// This renderer efficiently draws text using a texture atlas and GPU instancing.
+/// It supports caching glyphs on the GPU and batching draw calls.
+///
+/// # Color Handling
+///
+/// The renderer expects user data to be convertible to `[f32; 4]` representing
+/// **Premultiplied Alpha** color.
+///
+/// - **Input Format**: `[r, g, b, a]` where components are premultiplied by alpha.
+///   - Example: 50% transparent white should be `[0.5, 0.5, 0.5, 0.5]`, NOT `[1.0, 1.0, 1.0, 0.5]`.
+/// - **Compositing**: The renderer performs standard usage of the alpha masking from the font atlas.
+///   It applies the mask to the input color. The pipeline is configured with `PREMULTIPLIED_ALPHA_BLENDING`.
+///
+/// # Performance Optimizations
+///
+/// ## Pipeline Caching
+/// The renderer creates render pipelines lazily based on the `TextureFormat` of the render target.
+/// This means the first `render` call for a new format might incur a small delay.
+///
+/// To avoid runtime hitches, you can pre-warm the cache by supplying expected formats
+/// during initialization:
+/// ```rust
+/// let renderer = WgpuRenderer::new(
+///     &device,
+///     &cache_configs,
+///     &[wgpu::TextureFormat::Bgra8Unorm, wgpu::TextureFormat::Rgba8Unorm] // Pre-compile these
+/// );
+/// ```
+///
+/// # Usage
+/// 1. Initialize with `WgpuRenderer::new`.
+/// 2. Prepare text layout using `FontSystem`.
+/// 3. Call `render` inside your generic render pass.
+///
+/// ```no_run
+/// renderer.render(
+///     &device,
+///     &layout,
+///     &mut font_storage,
+///     &texture_view,
+///     &mut encoder,
+///     [screen_width, screen_height],
+/// );
+/// ```
+///
+/// # Important Notes
+/// - **Atlas Management**: The renderer manages an internal texture atlas array.
+///   It automatically handles updates and uploads. Ensure `configs` passed to `new`
+///   are sufficient for your text usage preventing frequent cache trashing (fallback strategy handles overflow but can be slower).
+/// - **Command Encoder**: The `render` method takes a mutable `CommandEncoder`. It will record
+///   copy commands (for atlas/uniform updates) and a render pass.
+/// - **Thread Safety**: `WgpuRenderer` employs internal mutability (`RefCell`) for resource
+///   management, so it is **not** `Sync`. Even though `wgpu` resources are thread-safe,
+///   this renderer is designed to be used from a single thread (usually the main render thread).
 pub struct WgpuRenderer {
     pub gpu_renderer: GpuRenderer,
     resources: WgpuResources,
 }
 
 struct WgpuResources {
-    device: Arc<wgpu::Device>,
-    pipeline: wgpu::RenderPipeline,
-    standalone_pipeline: wgpu::RenderPipeline,
+    pipelines: std::cell::RefCell<HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>>,
+    standalone_pipelines: std::cell::RefCell<HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>>,
+
+    pipeline_layout: wgpu::PipelineLayout,
+    standalone_pipeline_layout: wgpu::PipelineLayout,
+    shader: wgpu::ShaderModule,
+    standalone_shader: wgpu::ShaderModule,
+
     atlas_texture: wgpu::Texture,
     sampler: wgpu::Sampler,
     instance_buffer: std::cell::RefCell<wgpu::Buffer>,
@@ -71,11 +116,11 @@ const STANDALONE_SHADER: &str = include_str!("wgpu_renderer/wgpu_renderer_standa
 
 impl WgpuRenderer {
     pub fn new(
-        device: Arc<wgpu::Device>,
-        configs: Vec<GlyphAtlasConfig>,
-        format: wgpu::TextureFormat,
+        device: &wgpu::Device,
+        configs: &[GpuCacheConfig],
+        formats: &[wgpu::TextureFormat],
     ) -> Self {
-        let gpu_renderer = GpuRenderer::new(configs.clone());
+        let gpu_renderer = GpuRenderer::new(configs);
 
         // Calculate max dimensions and layers
         let max_width = configs
@@ -210,105 +255,6 @@ impl WgpuRenderer {
             source: wgpu::ShaderSource::Wgsl(STANDALONE_SHADER.into()),
         });
 
-        let instance_buffer_layout = wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<InstanceData>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &[
-                // screen_rect
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                // uv_rect
-                wgpu::VertexAttribute {
-                    offset: 16,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                // color
-                wgpu::VertexAttribute {
-                    offset: 32,
-                    shader_location: 2,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                // layer
-                wgpu::VertexAttribute {
-                    offset: 48,
-                    shader_location: 3,
-                    format: wgpu::VertexFormat::Uint32,
-                },
-            ],
-        };
-
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("WgpuRenderer Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: std::slice::from_ref(&instance_buffer_layout),
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleStrip,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                unclipped_depth: false,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                conservative: false,
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
-
-        let standalone_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("WgpuRenderer Standalone Pipeline"),
-            layout: Some(&standalone_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &standalone_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[instance_buffer_layout], // Same layout
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &standalone_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleStrip,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                unclipped_depth: false,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                conservative: false,
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
-
         let instance_capacity = 1024;
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Instance Buffer"),
@@ -344,9 +290,12 @@ impl WgpuRenderer {
         });
 
         let resources = WgpuResources {
-            device,
-            pipeline,
-            standalone_pipeline,
+            pipelines: std::cell::RefCell::new(HashMap::new()),
+            standalone_pipelines: std::cell::RefCell::new(HashMap::new()),
+            pipeline_layout,
+            standalone_pipeline_layout,
+            shader,
+            standalone_shader,
             atlas_texture,
             sampler,
             instance_buffer: std::cell::RefCell::new(instance_buffer),
@@ -357,18 +306,28 @@ impl WgpuRenderer {
             standalone_resources: std::cell::RefCell::new(None),
         };
 
+        for &format in formats {
+            resources.get_pipeline(device, format);
+            resources.get_standalone_pipeline(device, format);
+        }
+
         Self {
             gpu_renderer,
             resources,
         }
     }
 
-    pub fn render<T: ToInstance + Copy>(
+    pub fn clear_cache(&mut self) {
+        self.gpu_renderer.clear_cache();
+    }
+
+    pub fn render<T: Into<[f32; 4]> + Copy>(
         &mut self,
         layout: &TextLayout<T>,
         font_storage: &mut FontStorage,
-        view: &wgpu::TextureView,
+        device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
         screen_size: [f32; 2],
     ) {
         // Reset offset at the beginning of the frame
@@ -379,14 +338,11 @@ impl WgpuRenderer {
             screen_size,
             _padding: [0.0; 2],
         };
-        let globals_staging_buffer =
-            self.resources
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Globals Staging Buffer"),
-                    contents: bytemuck::bytes_of(&globals),
-                    usage: wgpu::BufferUsages::COPY_SRC,
-                });
+        let globals_staging_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Globals Staging Buffer"),
+            contents: bytemuck::bytes_of(&globals),
+            usage: wgpu::BufferUsages::COPY_SRC,
+        });
         encoder.copy_buffer_to_buffer(
             &globals_staging_buffer,
             0,
@@ -402,10 +358,11 @@ impl WgpuRenderer {
             font_storage,
             &mut |updates: &[AtlasUpdate]| {
                 self.resources
-                    .update_atlas(&mut encoder_cell.borrow_mut(), updates);
+                    .update_atlas(device, &mut encoder_cell.borrow_mut(), updates);
             },
             &mut |instances: &[GlyphInstance<T>]| {
                 self.resources.draw_instances(
+                    device,
                     &mut encoder_cell.borrow_mut(),
                     view,
                     &current_offset,
@@ -414,6 +371,7 @@ impl WgpuRenderer {
             },
             &mut |standalone: &StandaloneGlyph<T>| {
                 self.resources.draw_standalone(
+                    device,
                     &mut encoder_cell.borrow_mut(),
                     view,
                     &current_offset,
@@ -425,7 +383,172 @@ impl WgpuRenderer {
 }
 
 impl WgpuResources {
-    fn update_atlas(&self, encoder: &mut wgpu::CommandEncoder, updates: &[AtlasUpdate]) {
+    fn get_pipeline(
+        &self,
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+    ) -> wgpu::RenderPipeline {
+        // Optimistic check
+        if let Some(pipeline) = self.pipelines.borrow().get(&format) {
+            return pipeline.clone();
+        }
+
+        // Create new pipeline
+        let instance_buffer_layout = wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<InstanceData>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &[
+                // screen_rect
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // uv_rect
+                wgpu::VertexAttribute {
+                    offset: 16,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // color
+                wgpu::VertexAttribute {
+                    offset: 32,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // layer
+                wgpu::VertexAttribute {
+                    offset: 48,
+                    shader_location: 3,
+                    format: wgpu::VertexFormat::Uint32,
+                },
+            ],
+        };
+
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("WgpuRenderer Pipeline"),
+            layout: Some(&self.pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &self.shader,
+                entry_point: Some("vs_main"),
+                buffers: std::slice::from_ref(&instance_buffer_layout),
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &self.shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                unclipped_depth: false,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        self.pipelines.borrow_mut().insert(format, pipeline.clone());
+        pipeline
+    }
+
+    fn get_standalone_pipeline(
+        &self,
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+    ) -> wgpu::RenderPipeline {
+        if let Some(pipeline) = self.standalone_pipelines.borrow().get(&format) {
+            return pipeline.clone();
+        }
+
+        let instance_buffer_layout = wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<InstanceData>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &[
+                // screen_rect
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // uv_rect
+                wgpu::VertexAttribute {
+                    offset: 16,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // color
+                wgpu::VertexAttribute {
+                    offset: 32,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // layer
+                wgpu::VertexAttribute {
+                    offset: 48,
+                    shader_location: 3,
+                    format: wgpu::VertexFormat::Uint32,
+                },
+            ],
+        };
+
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("WgpuRenderer Standalone Pipeline"),
+            layout: Some(&self.standalone_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &self.standalone_shader,
+                entry_point: Some("vs_main"),
+                buffers: std::slice::from_ref(&instance_buffer_layout),
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &self.standalone_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                unclipped_depth: false,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        self.standalone_pipelines
+            .borrow_mut()
+            .insert(format, pipeline.clone());
+        pipeline
+    }
+
+    fn update_atlas(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        updates: &[AtlasUpdate],
+    ) {
         for update in updates {
             let width = update.width as u32;
             let height = update.height as u32;
@@ -453,13 +576,11 @@ impl WgpuResources {
                 std::borrow::Cow::Owned(padded)
             };
 
-            let staging_buffer =
-                self.device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Atlas Staging Buffer"),
-                        contents: &data,
-                        usage: wgpu::BufferUsages::COPY_SRC,
-                    });
+            let staging_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Atlas Staging Buffer"),
+                contents: &data,
+                usage: wgpu::BufferUsages::COPY_SRC,
+            });
 
             encoder.copy_buffer_to_texture(
                 wgpu::TexelCopyBufferInfo {
@@ -489,8 +610,9 @@ impl WgpuResources {
         }
     }
 
-    fn draw_instances<T: ToInstance + Copy>(
+    fn draw_instances<T: Into<[f32; 4]> + Copy>(
         &self,
+        device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         current_offset: &std::cell::Cell<u64>,
@@ -517,7 +639,7 @@ impl WgpuResources {
                     inst.uv_rect.width(),
                     inst.uv_rect.height(),
                 ],
-                color: inst.user_data.to_color(),
+                color: inst.user_data.into(),
                 layer: inst.texture_index as u32,
                 _padding: [0; 3],
             })
@@ -529,7 +651,7 @@ impl WgpuResources {
 
         if needed_bytes > current_capacity {
             let new_capacity = needed_bytes.max(current_capacity * 2);
-            let new_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            let new_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Instance Buffer"),
                 size: new_capacity,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
@@ -542,13 +664,11 @@ impl WgpuResources {
         let offset = current_offset.get();
         let bytes = bytemuck::cast_slice(&instance_data);
 
-        let staging_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Instance Staging Buffer"),
-                contents: bytes,
-                usage: wgpu::BufferUsages::COPY_SRC,
-            });
+        let staging_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Instance Staging Buffer"),
+            contents: bytes,
+            usage: wgpu::BufferUsages::COPY_SRC,
+        });
 
         encoder.copy_buffer_to_buffer(
             &staging_buffer,
@@ -574,7 +694,9 @@ impl WgpuResources {
             occlusion_query_set: None,
         });
 
-        rpass.set_pipeline(&self.pipeline);
+        // Use cached pipeline or create new one based on format
+        let pipeline = self.get_pipeline(device, view.texture().format());
+        rpass.set_pipeline(&pipeline);
         rpass.set_bind_group(0, &self.globals_bind_group, &[]);
         rpass.set_vertex_buffer(
             0,
@@ -585,8 +707,9 @@ impl WgpuResources {
         current_offset.set(offset + bytes.len() as u64);
     }
 
-    fn draw_standalone<T: ToInstance + Copy>(
+    fn draw_standalone<T: Into<[f32; 4]> + Copy>(
         &self,
+        device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         current_offset: &std::cell::Cell<u64>,
@@ -625,7 +748,7 @@ impl WgpuResources {
                 depth_or_array_layers: 1,
             };
 
-            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("Standalone Glyph Texture"),
                 size,
                 mip_level_count: 1,
@@ -638,7 +761,7 @@ impl WgpuResources {
 
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Standalone Bind Group"),
                 layout: &self.standalone_bind_group_layout,
                 entries: &[
@@ -688,13 +811,11 @@ impl WgpuResources {
             std::borrow::Cow::Owned(padded)
         };
 
-        let staging_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Standalone Staging Buffer"),
-                contents: &data,
-                usage: wgpu::BufferUsages::COPY_SRC,
-            });
+        let staging_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Standalone Staging Buffer"),
+            contents: &data,
+            usage: wgpu::BufferUsages::COPY_SRC,
+        });
 
         encoder.copy_buffer_to_texture(
             wgpu::TexelCopyBufferInfo {
@@ -731,7 +852,7 @@ impl WgpuResources {
                 standalone.screen_rect.height(),
             ],
             uv_rect: [0.0, 0.0, u_max, v_max],
-            color: standalone.user_data.to_color(),
+            color: standalone.user_data.into(),
             layer: 0,
             _padding: [0; 3],
         };
@@ -743,7 +864,7 @@ impl WgpuResources {
 
         if needed_bytes > current_capacity {
             let new_capacity = needed_bytes.max(current_capacity * 2);
-            let new_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            let new_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Instance Buffer"),
                 size: new_capacity,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
@@ -755,13 +876,11 @@ impl WgpuResources {
         let offset = current_offset.get();
         let bytes = bytemuck::bytes_of(&instance_data);
 
-        let staging_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Standalone Instance Staging Buffer"),
-                contents: bytes,
-                usage: wgpu::BufferUsages::COPY_SRC,
-            });
+        let staging_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Standalone Instance Staging Buffer"),
+            contents: bytes,
+            usage: wgpu::BufferUsages::COPY_SRC,
+        });
 
         encoder.copy_buffer_to_buffer(
             &staging_buffer,
@@ -787,7 +906,8 @@ impl WgpuResources {
             occlusion_query_set: None,
         });
 
-        rpass.set_pipeline(&self.standalone_pipeline);
+        let pipeline = self.get_standalone_pipeline(device, view.texture().format());
+        rpass.set_pipeline(&pipeline);
         rpass.set_bind_group(0, &resources.bind_group, &[]);
         rpass.set_vertex_buffer(
             0,

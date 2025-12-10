@@ -1,10 +1,7 @@
 use crate::{
     font_storage::FontStorage,
-    renderer::{
-        gpu_renderer::{
-            AtlasUpdate, GlyphAtlasConfig, GlyphInstance, GpuRenderer, StandaloneGlyph,
-        },
-        wgpu_renderer::ToInstance,
+    renderer::gpu_renderer::{
+        AtlasUpdate, GlyphInstance, GpuCacheConfig, GpuRenderer, StandaloneGlyph,
     },
     text::TextLayout,
 };
@@ -12,25 +9,25 @@ use crate::{
 pub struct CpuDebugRenderer {
     gpu_renderer: GpuRenderer,
     atlases: std::cell::RefCell<Vec<Vec<u8>>>, // List of atlas textures (grayscale)
-    atlas_configs: Vec<GlyphAtlasConfig>,
+    atlas_configs: Vec<GpuCacheConfig>,
 }
 
 impl CpuDebugRenderer {
-    pub fn new(configs: Vec<GlyphAtlasConfig>) -> Self {
+    pub fn new(configs: &[GpuCacheConfig]) -> Self {
         let mut atlases = Vec::new();
-        for config in &configs {
+        for config in configs {
             let size = config.texture_size.get();
             atlases.push(vec![0; size * size]);
         }
 
         Self {
-            gpu_renderer: GpuRenderer::new(configs.clone()),
+            gpu_renderer: GpuRenderer::new(configs),
             atlases: std::cell::RefCell::new(atlases),
-            atlas_configs: configs,
+            atlas_configs: configs.to_vec(),
         }
     }
 
-    pub fn render<T: Clone + Copy + ToInstance>(
+    pub fn render<T: Clone + Copy + Into<[f32; 4]>>(
         &mut self,
         layout: &TextLayout<T>,
         font_storage: &mut FontStorage,
@@ -66,7 +63,7 @@ impl CpuDebugRenderer {
                 let mut target_buffer = target_cell.borrow_mut();
                 let atlases = self.atlases.borrow();
                 for instance in instances {
-                    let color = instance.user_data.to_color();
+                    let color: [f32; 4] = instance.user_data.into();
                     let atlas = &atlases[instance.texture_index];
                     let atlas_width = self.atlas_configs[instance.texture_index]
                         .texture_size
@@ -116,22 +113,23 @@ impl CpuDebugRenderer {
                             let pixel_idx = (ty as usize * target_width + tx as usize) * 4;
 
                             // Alpha blending
-                            let r = color[0];
-                            let g = color[1];
-                            let b = color[2];
-                            let a = color[3] * alpha;
+                            // Input color is premultiplied alpha
+                            let src_r = color[0] * alpha;
+                            let src_g = color[1] * alpha;
+                            let src_b = color[2] * alpha;
+                            let src_a = color[3] * alpha;
 
                             let bg_r = target_buffer[pixel_idx] as f32 / 255.0;
                             let bg_g = target_buffer[pixel_idx + 1] as f32 / 255.0;
                             let bg_b = target_buffer[pixel_idx + 2] as f32 / 255.0;
                             let bg_a = target_buffer[pixel_idx + 3] as f32 / 255.0;
 
-                            let out_a = a + bg_a * (1.0 - a);
+                            let out_a = src_a + bg_a * (1.0 - src_a);
                             // Avoid division by zero
                             if out_a > 0.0 {
-                                let out_r = (r * a + bg_r * bg_a * (1.0 - a)) / out_a;
-                                let out_g = (g * a + bg_g * bg_a * (1.0 - a)) / out_a;
-                                let out_b = (b * a + bg_b * bg_a * (1.0 - a)) / out_a;
+                                let out_r = (src_r + bg_r * bg_a * (1.0 - src_a)) / out_a;
+                                let out_g = (src_g + bg_g * bg_a * (1.0 - src_a)) / out_a;
+                                let out_b = (src_b + bg_b * bg_a * (1.0 - src_a)) / out_a;
 
                                 target_buffer[pixel_idx] = (out_r * 255.0) as u8;
                                 target_buffer[pixel_idx + 1] = (out_g * 255.0) as u8;
@@ -144,7 +142,7 @@ impl CpuDebugRenderer {
             },
             &mut |standalone: &StandaloneGlyph<T>| {
                 let mut target_buffer = target_cell.borrow_mut();
-                let color = standalone.user_data.to_color();
+                let color: [f32; 4] = standalone.user_data.into();
                 let src_w = standalone.width;
                 let src_h = standalone.height;
 
@@ -171,22 +169,23 @@ impl CpuDebugRenderer {
 
                         let pixel_idx = (ty as usize * target_width + tx as usize) * 4;
 
-                        // Alpha blending (same as above)
-                        let r = color[0];
-                        let g = color[1];
-                        let b = color[2];
-                        let a = color[3] * alpha;
+                        // Alpha blending
+                        // Input color is premultiplied alpha
+                        let src_r = color[0] * alpha;
+                        let src_g = color[1] * alpha;
+                        let src_b = color[2] * alpha;
+                        let src_a = color[3] * alpha;
 
                         let bg_r = target_buffer[pixel_idx] as f32 / 255.0;
                         let bg_g = target_buffer[pixel_idx + 1] as f32 / 255.0;
                         let bg_b = target_buffer[pixel_idx + 2] as f32 / 255.0;
                         let bg_a = target_buffer[pixel_idx + 3] as f32 / 255.0;
 
-                        let out_a = a + bg_a * (1.0 - a);
+                        let out_a = src_a + bg_a * (1.0 - src_a);
                         if out_a > 0.0 {
-                            let out_r = (r * a + bg_r * bg_a * (1.0 - a)) / out_a;
-                            let out_g = (g * a + bg_g * bg_a * (1.0 - a)) / out_a;
-                            let out_b = (b * a + bg_b * bg_a * (1.0 - a)) / out_a;
+                            let out_r = (src_r + bg_r * bg_a * (1.0 - src_a)) / out_a;
+                            let out_g = (src_g + bg_g * bg_a * (1.0 - src_a)) / out_a;
+                            let out_b = (src_b + bg_b * bg_a * (1.0 - src_a)) / out_a;
 
                             target_buffer[pixel_idx] = (out_r * 255.0) as u8;
                             target_buffer[pixel_idx + 1] = (out_g * 255.0) as u8;

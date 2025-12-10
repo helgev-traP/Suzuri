@@ -44,5 +44,5 @@ fn vs_main(model: VertexInput, instance: InstanceInput) -> VertexOutput {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let alpha = textureSample(font_texture, font_sampler, in.tex_coords).r;
-    return vec4<f32>(in.color.rgb, in.color.a * alpha);
+    return in.color * alpha;
 }

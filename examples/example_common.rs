@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 use std::collections::HashSet;
 
 use fxhash::FxBuildHasher;
@@ -22,12 +24,6 @@ impl TextColor {
         r: 1.0,
         g: 1.0,
         b: 1.0,
-        a: 1.0,
-    };
-    pub const BLACK: Self = Self {
-        r: 0.0,
-        g: 0.0,
-        b: 0.0,
         a: 1.0,
     };
     pub const NEON_CYAN: Self = Self {
@@ -69,9 +65,15 @@ impl TextColor {
 }
 
 #[cfg(feature = "wgpu")]
-impl wgfont::renderer::wgpu_renderer::ToInstance for TextColor {
-    fn to_color(&self) -> [f32; 4] {
-        [self.r, self.g, self.b, self.a]
+impl From<TextColor> for [f32; 4] {
+    fn from(color: TextColor) -> Self {
+        // Premultiplied alpha
+        [
+            color.r * color.a,
+            color.g * color.a,
+            color.b * color.a,
+            color.a,
+        ]
     }
 }
 
@@ -319,4 +321,14 @@ pub fn build_text_data(
     });
 
     data
+}
+
+#[allow(dead_code)]
+fn main() {
+    println!(
+        "
+        `example_common.rs` is a shared module for the examples.
+        This main function is just a placeholder to make cargo happy.
+        "
+    );
 }

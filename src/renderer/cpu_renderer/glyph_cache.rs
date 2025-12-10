@@ -189,28 +189,34 @@ impl<T: Default + Clone + Copy> VecAtlas<T> {
 
 use std::borrow::Cow;
 
-pub struct GlyphCacheItem<'a> {
+pub struct CpuCacheItem<'a> {
     pub width: usize,
     pub height: usize,
     pub data: Cow<'a, [u8]>,
 }
 
-pub struct GlyphCache {
+#[derive(Clone, Copy)]
+pub struct CpuCacheConfig {
+    pub block_size: NonZeroUsize,
+    pub capacity: NonZeroUsize,
+}
+
+pub struct CpuCache {
     /// must be sorted by block size
     caches: Vec<VecAtlas<u8>>,
 }
 
-impl GlyphCache {
-    pub fn new(blocksize_capasity: &[(NonZeroUsize, NonZeroUsize)]) -> Self {
+impl CpuCache {
+    pub fn new(configs: &[CpuCacheConfig]) -> Self {
         let sorted_by_blocsize = {
-            let mut v = blocksize_capasity.to_vec();
-            v.sort_by_key(|(block_size, _)| *block_size);
+            let mut v = configs.to_vec();
+            v.sort_by_key(|config| config.block_size);
             v
         };
 
         let caches = sorted_by_blocsize
             .into_iter()
-            .map(|(block_size, capacity)| VecAtlas::new(capacity, block_size))
+            .map(|config| VecAtlas::new(config.capacity, config.block_size))
             .collect();
 
         Self { caches }
@@ -226,7 +232,7 @@ impl GlyphCache {
         &'_ mut self,
         glyph_id: &GlyphId,
         font_storage: &mut FontStorage,
-    ) -> Option<GlyphCacheItem<'_>> {
+    ) -> Option<CpuCacheItem<'_>> {
         let glyph_index = glyph_id.glyph_index();
         let font_size = glyph_id.font_size();
         let font_id = glyph_id.font_id();
@@ -245,7 +251,7 @@ impl GlyphCache {
             bitmap.1
         });
 
-        Some(GlyphCacheItem {
+        Some(CpuCacheItem {
             width: glyph_metrics.width,
             height: glyph_metrics.height,
             data: Cow::Borrowed(data),
@@ -399,17 +405,17 @@ mod tests {
     #[test]
     fn test_glyph_cache_selection() {
         let config = vec![
-            (
-                NonZeroUsize::new(10).unwrap(),
-                NonZeroUsize::new(100).unwrap(),
-            ), // Block size 10, Cap 100
-            (
-                NonZeroUsize::new(20).unwrap(),
-                NonZeroUsize::new(50).unwrap(),
-            ), // Block size 20, Cap 50
+            CpuCacheConfig {
+                block_size: NonZeroUsize::new(10).unwrap(),
+                capacity: NonZeroUsize::new(100).unwrap(),
+            },
+            CpuCacheConfig {
+                block_size: NonZeroUsize::new(20).unwrap(),
+                capacity: NonZeroUsize::new(50).unwrap(),
+            },
         ];
 
-        let cache = GlyphCache::new(&config);
+        let cache = CpuCache::new(&config);
         assert_eq!(cache.caches.len(), 2);
         assert_eq!(cache.caches[0].block_size, 10);
         assert_eq!(cache.caches[1].block_size, 20);

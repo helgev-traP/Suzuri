@@ -12,6 +12,7 @@ log = "0.4.28"
 nalgebra = { version = "0.34.1", optional = true }
 wgpu = { version = "27.0.1", optional = true }
 bytemuck = { version = "1.16", features = ["derive"] }
+palette = { version = "0.7.6", features = ["bytemuck"] }
 
 [features]
 wgpu = ["dep:wgpu", "dep:nalgebra"]

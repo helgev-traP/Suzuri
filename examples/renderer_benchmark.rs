@@ -6,7 +6,7 @@ use fxhash::FxBuildHasher;
 use wgfont::{
     font_storage::FontStorage,
     fontdb::{self, Family, Query},
-    renderer::{CpuRenderer, cpu_renderer::GlyphCache, debug_renderer},
+    renderer::{CpuRenderer, debug_renderer},
     text::{HorizontalAlign, TextData, TextElement, TextLayoutConfig, VerticalAlign, WrapStyle},
 };
 
@@ -124,18 +124,18 @@ fn main() {
     // --- Benchmark CPU Renderer ---
     {
         // Configure cache
+        // Configure cache
         let cache_config = [
-            (
-                NonZeroUsize::new(512).unwrap(), // Block size
-                NonZeroUsize::new(128).unwrap(), // Capacity
-            ),
-            (
-                NonZeroUsize::new(1024).unwrap(),
-                NonZeroUsize::new(128).unwrap(),
-            ),
+            wgfont::renderer::cpu_renderer::CpuCacheConfig {
+                block_size: NonZeroUsize::new(512).unwrap(), // Block size
+                capacity: NonZeroUsize::new(128).unwrap(),   // Capacity
+            },
+            wgfont::renderer::cpu_renderer::CpuCacheConfig {
+                block_size: NonZeroUsize::new(1024).unwrap(),
+                capacity: NonZeroUsize::new(128).unwrap(),
+            },
         ];
-        let cache = GlyphCache::new(&cache_config);
-        let mut renderer = CpuRenderer::new(cache);
+        let mut renderer = CpuRenderer::new(&cache_config);
 
         // Warmup / First run (includes caching overhead)
         let start_first = Instant::now();
