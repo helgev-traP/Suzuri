@@ -1,5 +1,6 @@
 [package]
 name = "suzuri"
+authors = ["https://github.com/helgev-traP"]
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
