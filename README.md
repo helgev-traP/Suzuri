@@ -25,6 +25,7 @@ Suzuriは、Rust製のテキストレンダリングライブラリです。CPU�
 ## Installation / インストール
 
 Add the following to your `Cargo.toml`.
+
 `Cargo.toml` に以下を追加してください。
 
 ```toml
@@ -33,6 +34,7 @@ suzuri = "0.1.0"
 ```
 
 To use wgpu features, enable the `wgpu` feature.
+
 wgpu機能を使用する場合は、`wgpu` featureを有効にしてください。
 
 ```toml
@@ -45,6 +47,7 @@ suzuri = { version = "0.1.0", features = ["wgpu"] }
 ### 1. Prepare Fonts / フォントの準備
 
 Use `FontStorage` to load fonts. You can load system fonts or query specific fonts.
+
 `FontStorage` を使用してフォントを読み込みます。システムフォントをロードしたり、特定のフォントをクエリすることができます。
 
 ```rust
@@ -67,11 +70,13 @@ let font_id = font_storage
 ```
 
 For details on font queries, please refer to the [fontdb documentation](https://docs.rs/fontdb/latest/fontdb/struct.Query.html).
+
 フォントクエリの詳細については、[fontdbのドキュメント](https://docs.rs/fontdb/latest/fontdb/struct.Query.html)を参照してください。
 
 ### 2. Create Text Data / テキストデータの作成
 
 Define the content and style of the text you want to render.
+
 描画したいテキストの内容とスタイルを定義します。
 
 ```rust
@@ -93,6 +98,7 @@ data.append(TextElement {
 ### 3. Calculate Layout / レイアウトの計算
 
 Configure layout settings with `TextLayoutConfig` and calculate the placement.
+
 `TextLayoutConfig` でレイアウト設定を行い、配置を計算します。
 
 ```rust
@@ -116,6 +122,7 @@ let layout = data.layout(&config, &mut font_storage);
 #### GPU Rendering (wgpu) / GPUレンダリング (wgpu)
 
 Use `WgpuRenderer` to draw. You need to set up `wgpu::Device` and `wgpu::Queue` beforehand.
+
 `WgpuRenderer` を使用して描画します。事前に `wgpu::Device` や `wgpu::Queue` のセットアップが必要です。
 
 ```rust
@@ -141,6 +148,7 @@ renderer.render(&layout, &device, &queue, &mut rpass);
 #### CPU Rendering / CPUレンダリング
 
 Use `CpuRenderer` to get pixel data.
+
 `CpuRenderer` を使用してピクセルデータを取得します。
 
 ```rust
