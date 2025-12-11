@@ -1,7 +1,7 @@
 use std::num::NonZeroUsize;
 
 use image::{ImageBuffer, Rgba};
-use wgfont::{
+use suzuri::{
     font_storage::FontStorage,
     renderer::{gpu_renderer::GpuCacheConfig, wgpu_renderer::WgpuRenderer},
 };

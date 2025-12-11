@@ -1,7 +1,7 @@
 use std::num::NonZeroUsize;
 
 use image::{ImageBuffer, Rgb};
-use wgfont::{font_storage::FontStorage, renderer::CpuRenderer};
+use suzuri::{font_storage::FontStorage, renderer::CpuRenderer};
 
 mod example_common;
 use example_common::{TextColor, WIDTH, build_text_data, load_fonts, make_layout_config};
@@ -32,11 +32,11 @@ fn main() {
 
     // Initialize CpuRenderer
     let cache_config = [
-        wgfont::renderer::cpu_renderer::CpuCacheConfig {
+        suzuri::renderer::cpu_renderer::CpuCacheConfig {
             block_size: NonZeroUsize::new(1024).unwrap(), // Block size (e.g. 32x32)
             capacity: NonZeroUsize::new(1024).unwrap(),   // Capacity
         },
-        wgfont::renderer::cpu_renderer::CpuCacheConfig {
+        suzuri::renderer::cpu_renderer::CpuCacheConfig {
             block_size: NonZeroUsize::new(4096).unwrap(), // Block size (e.g. 64x64)
             capacity: NonZeroUsize::new(256).unwrap(),    // Capacity
         },

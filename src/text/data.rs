@@ -4,7 +4,7 @@
 /// builds line buffers from them. Keeping the runs grouped here lets the
 /// caller reuse the same builder for repeated layout work.
 #[derive(Clone, Debug, PartialEq)]
-pub struct TextData<T> {
+pub struct TextData<T: Clone> {
     pub texts: Vec<TextElement<T>>,
 }
 
@@ -20,13 +20,13 @@ pub struct TextElement<T> {
     pub user_data: T,
 }
 
-impl<T> Default for TextData<T> {
+impl<T: Clone> Default for TextData<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T> TextData<T> {
+impl<T: Clone> TextData<T> {
     /// Creates an empty container that can receive text runs.
     pub fn new() -> Self {
         Self { texts: vec![] }

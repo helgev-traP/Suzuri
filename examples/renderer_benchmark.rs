@@ -3,7 +3,7 @@ use std::num::NonZeroUsize;
 use std::time::Instant;
 
 use fxhash::FxBuildHasher;
-use wgfont::{
+use suzuri::{
     font_storage::FontStorage,
     fontdb::{self, Family, Query},
     renderer::{CpuRenderer, debug_renderer},
@@ -126,11 +126,11 @@ fn main() {
         // Configure cache
         // Configure cache
         let cache_config = [
-            wgfont::renderer::cpu_renderer::CpuCacheConfig {
+            suzuri::renderer::cpu_renderer::CpuCacheConfig {
                 block_size: NonZeroUsize::new(512).unwrap(), // Block size
                 capacity: NonZeroUsize::new(128).unwrap(),   // Capacity
             },
-            wgfont::renderer::cpu_renderer::CpuCacheConfig {
+            suzuri::renderer::cpu_renderer::CpuCacheConfig {
                 block_size: NonZeroUsize::new(1024).unwrap(),
                 capacity: NonZeroUsize::new(128).unwrap(),
             },

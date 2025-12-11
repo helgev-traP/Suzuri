@@ -18,23 +18,24 @@ include = [
 ]
 
 [dependencies]
-euclid = "0.22.11"
-fontdb = "0.23.0"
-fontdue = "0.9.3"
-fxhash = "0.2.1"
-log = "0.4.28"
-nalgebra = { version = "0.34.1", optional = true }
-wgpu = { version = "27.0.1", optional = true }
-bytemuck = { version = "1.16", features = ["derive"] }
-palette = { version = "0.7.6", features = ["bytemuck"] }
+euclid = "^0.22.11"
+fontdb = "^0.23.0"
+fontdue = "^0.9.3"
+fxhash = "^0.2.1"
+log = "^0.4.28"
+nalgebra = { version = "^0.34.1", optional = true }
+wgpu = { version = "^27.0.1", optional = true }
+bytemuck = { version = "^1.16", features = ["derive"] }
+palette = { version = "^0.7.6", features = ["bytemuck"] }
+parking_lot = "^0.12.5"
 
 [features]
 wgpu = ["dep:wgpu", "dep:nalgebra"]
 
 [dev-dependencies]
-image = "0.25.8"
-pollster = "0.4.0"
-wgpu = "27.0.1"
+image = "^0.25.8"
+pollster = "^0.4.0"
+wgpu = "^27.0.1"
 
 [lints.clippy]
 unwrap-used = "warn"

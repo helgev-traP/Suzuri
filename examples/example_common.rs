@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use fxhash::FxBuildHasher;
-use wgfont::{
+use suzuri::{
     font_storage::FontStorage,
     fontdb::{self, Family, Query},
     text::{HorizontalAlign, TextData, TextElement, TextLayoutConfig, VerticalAlign, WrapStyle},

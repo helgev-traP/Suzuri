@@ -1,5 +1,5 @@
 use image::{ImageBuffer, Luma};
-use wgfont::{font_storage::FontStorage, renderer::debug_renderer};
+use suzuri::{font_storage::FontStorage, renderer::debug_renderer};
 
 mod example_common;
 use example_common::{WIDTH, build_text_data, load_fonts, make_layout_config};
