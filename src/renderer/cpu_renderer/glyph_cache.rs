@@ -189,24 +189,33 @@ impl<T: Default + Clone + Copy> VecAtlas<T> {
 
 use std::borrow::Cow;
 
+/// Information about a cached glyph in CPU cache.
 pub struct CpuCacheItem<'a> {
+    /// Width of the glyph bitmap.
     pub width: usize,
+    /// Height of the glyph bitmap.
     pub height: usize,
+    /// The bitmap data.
     pub data: Cow<'a, [u8]>,
 }
 
+/// Configuration for the CPU glyph cache.
 #[derive(Clone, Copy)]
 pub struct CpuCacheConfig {
+    /// Size of the memory block for caching.
     pub block_size: NonZeroUsize,
+    /// Maximum number of blocks to cache.
     pub capacity: NonZeroUsize,
 }
 
+/// A CPU-based glyph cache using an LRU policy.
 pub struct CpuCache {
     /// must be sorted by block size
     caches: Vec<VecAtlas<u8>>,
 }
 
 impl CpuCache {
+    /// Creates a new CPU cache with the provided configurations.
     pub fn new(configs: &[CpuCacheConfig]) -> Self {
         let sorted_by_blocsize = {
             let mut v = configs.to_vec();
@@ -222,12 +231,14 @@ impl CpuCache {
         Self { caches }
     }
 
+    /// Clears the cache.
     pub fn clear(&mut self) {
         for cache in &mut self.caches {
             cache.clear();
         }
     }
 
+    /// Retrieves a glyph from the cache, or rasterizes and caches it if missing.
     pub fn get(
         &'_ mut self,
         glyph_id: &GlyphId,

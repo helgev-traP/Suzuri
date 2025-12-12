@@ -15,12 +15,22 @@ use crate::{
 #[cfg(feature = "wgpu")]
 use crate::renderer::WgpuRenderer;
 
+/// High-level entry point for the text rendering system.
+///
+/// This struct coordinates `FontStorage`, `TextLayout`, and various renderers (CPU, GPU, WGPU).
+/// It provides a unified interface for loading fonts, laying out text, and rendering it.
+///
+/// Use `Mutex` to allow shared mutable access, which is common in UI frameworks.
 pub struct FontSystem {
+    /// The underlying font storage.
     pub font_storage: Mutex<FontStorage>,
 
+    /// The CPU renderer instance (optional).
     pub cpu_renderer: Mutex<Option<Box<CpuRenderer>>>,
+    /// The generic GPU renderer instance (optional).
     pub gpu_renderer: Mutex<Option<Box<GpuRenderer>>>,
     #[cfg(feature = "wgpu")]
+    /// The wgpu renderer instance (optional).
     pub wgpu_renderer: Mutex<Option<Box<WgpuRenderer>>>,
 }
 
@@ -31,6 +41,7 @@ impl Default for FontSystem {
 }
 
 impl FontSystem {
+    /// Creates a new font system with empty renderers and default storage.
     pub fn new() -> Self {
         Self {
             font_storage: Mutex::new(FontStorage::new()),
@@ -44,58 +55,72 @@ impl FontSystem {
 
 /// font storage initialization
 impl FontSystem {
+    /// Loads the system fonts into the storage.
     pub fn load_system_fonts(&self) {
         self.font_storage.lock().load_system_fonts();
     }
 
+    /// Loads a font from binary data.
     pub fn load_font_binary(&self, data: impl Into<Vec<u8>>) {
         self.font_storage.lock().load_font_binary(data);
     }
 
+    /// Loads a font from a file path.
     pub fn load_font_file(&self, path: PathBuf) -> Result<(), std::io::Error> {
         self.font_storage.lock().load_font_file(path)
     }
 
+    /// Loads all fonts from a directory.
     pub fn load_fonts_dir(&self, dir: PathBuf) {
         self.font_storage.lock().load_fonts_dir(dir)
     }
 
+    /// Manually adds a face info.
     pub fn push_face_info(&self, info: fontdb::FaceInfo) {
         self.font_storage.lock().push_face_info(info);
     }
 
+    /// Removes a face by ID.
     pub fn remove_face(&self, id: fontdb::ID) {
         self.font_storage.lock().remove_face(id);
     }
 
+    /// Checks if the storage is empty.
     pub fn is_empty(&self) -> bool {
         self.font_storage.lock().is_empty()
     }
 
+    /// Returns the number of loaded faces.
     pub fn len(&self) -> usize {
         self.font_storage.lock().len()
     }
 
+    /// Sets the family name for the "serif" generic family.
     pub fn set_serif_family(&self, family: impl Into<String>) {
         self.font_storage.lock().set_serif_family(family);
     }
 
+    /// Sets the family name for the "sans-serif" generic family.
     pub fn set_sans_serif_family(&self, family: impl Into<String>) {
         self.font_storage.lock().set_sans_serif_family(family);
     }
 
+    /// Sets the family name for the "cursive" generic family.
     pub fn set_cursive_family(&self, family: impl Into<String>) {
         self.font_storage.lock().set_cursive_family(family);
     }
 
+    /// Sets the family name for the "fantasy" generic family.
     pub fn set_fantasy_family(&self, family: impl Into<String>) {
         self.font_storage.lock().set_fantasy_family(family);
     }
 
+    /// Sets the family name for the "monospace" generic family.
     pub fn set_monospace_family(&self, family: impl Into<String>) {
         self.font_storage.lock().set_monospace_family(family);
     }
 
+    /// Returns the name of a family.
     pub fn family_name<'a>(&'a self, family: &'a fontdb::Family<'_>) -> String {
         self.font_storage.lock().family_name(family).to_string()
     }
@@ -103,18 +128,22 @@ impl FontSystem {
 
 /// font querying
 impl FontSystem {
+    /// Queries for a font matching the description.
     pub fn query(&self, query: &fontdb::Query) -> Option<(fontdb::ID, Arc<fontdue::Font>)> {
         self.font_storage.lock().query(query)
     }
 
+    /// Retrieves a loaded font by ID.
     pub fn font(&self, id: fontdb::ID) -> Option<Arc<fontdue::Font>> {
         self.font_storage.lock().font(id)
     }
 
+    /// Returns face info for an ID.
     pub fn face(&self, id: fontdb::ID) -> Option<fontdb::FaceInfo> {
         self.font_storage.lock().face(id).cloned()
     }
 
+    /// Returns the source of a face.
     pub fn face_source(&self, id: fontdb::ID) -> Option<(fontdb::Source, u32)> {
         self.font_storage.lock().face_source(id)
     }
@@ -122,6 +151,7 @@ impl FontSystem {
 
 /// text layout
 impl FontSystem {
+    /// Performs text layout using the fonts in this system.
     pub fn layout_text<T: Clone>(
         &self,
         text: &TextData<T>,
@@ -134,6 +164,9 @@ impl FontSystem {
 
 /// cpu renderer
 impl FontSystem {
+    /// Initializes the CPU renderer with the given cache configuration.
+    ///
+    /// This will replace any existing CPU renderer.
     pub fn cpu_init(&self, configs: &[CpuCacheConfig]) {
         // ensures first drop previous resource to avoid unnecessary memory usage.
         *self.cpu_renderer.lock() = None;
@@ -141,6 +174,7 @@ impl FontSystem {
         *self.cpu_renderer.lock() = Some(Box::new(CpuRenderer::new(configs)));
     }
 
+    /// Clears the CPU renderer's cache.
     pub fn cpu_cache_clear(&self) {
         if let Some(renderer) = &mut *self.cpu_renderer.lock() {
             renderer.clear_cache();
@@ -149,6 +183,9 @@ impl FontSystem {
         }
     }
 
+    /// Renders text using the CPU renderer.
+    ///
+    /// The callback `f` is called for each pixel.
     pub fn cpu_render<T>(
         &self,
         layout: &TextLayout<T>,
@@ -165,6 +202,9 @@ impl FontSystem {
 
 /// gpu renderer
 impl FontSystem {
+    /// Initializes the generic GPU renderer with the given cache configuration.
+    ///
+    /// This will replace any existing GPU renderer.
     pub fn gpu_init(&self, configs: &[GpuCacheConfig]) {
         // ensures first drop previous resource to avoid unnecessary memory usage.
         *self.gpu_renderer.lock() = None;
@@ -172,6 +212,7 @@ impl FontSystem {
         *self.gpu_renderer.lock() = Some(Box::new(GpuRenderer::new(configs)));
     }
 
+    /// Clears the generic GPU renderer's cache.
     pub fn gpu_cache_clear(&self) {
         if let Some(renderer) = &mut *self.gpu_renderer.lock() {
             renderer.clear_cache();
@@ -180,6 +221,9 @@ impl FontSystem {
         }
     }
 
+    /// Renders text using the generic GPU renderer.
+    ///
+    /// This requires providing callbacks to handle atlas updates and drawing.
     pub fn gpu_render<T: Clone + Copy>(
         &self,
         layout: &TextLayout<T>,
@@ -204,6 +248,10 @@ impl FontSystem {
 /// wgpu renderer
 #[cfg(feature = "wgpu")]
 impl FontSystem {
+    /// Initializes the WGPU renderer.
+    ///
+    /// `configs` specifies the atlas configuration.
+    /// `formats` specifies the texture formats that will be used for rendering, allowing pipeline pre-compilation.
     pub fn wgpu_init(
         &self,
         device: &wgpu::Device,
@@ -216,6 +264,7 @@ impl FontSystem {
         *self.wgpu_renderer.lock() = Some(Box::new(WgpuRenderer::new(device, configs, formats)));
     }
 
+    /// Clears the WGPU renderer's cache.
     pub fn wgpu_cache_clear(&self) {
         if let Some(renderer) = &mut *self.wgpu_renderer.lock() {
             renderer.clear_cache();
@@ -224,23 +273,16 @@ impl FontSystem {
         }
     }
 
+    /// Renders text using the WGPU renderer.
     pub fn wgpu_render<T: Into<[f32; 4]> + Copy>(
         &self,
         layout: &TextLayout<T>,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
-        screen_size: [f32; 2],
     ) {
         if let Some(renderer) = &mut *self.wgpu_renderer.lock() {
-            renderer.render(
-                layout,
-                &mut self.font_storage.lock(),
-                device,
-                encoder,
-                view,
-                screen_size,
-            );
+            renderer.render(layout, &mut self.font_storage.lock(), device, encoder, view);
         } else {
             log::warn!("Render called before wgpu renderer initialized.");
         }

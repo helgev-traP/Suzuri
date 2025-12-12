@@ -8,45 +8,71 @@ use crate::{
 mod glyph_cache;
 pub use glyph_cache::{CacheAtlas, GpuCache, GpuCacheConfig, GpuCacheItem};
 
+/// Describes an update to a texture in the atlas.
 pub struct AtlasUpdate {
+    /// Index of the texture in the atlas array to update.
     pub texture_index: usize,
+    /// X coordinate of the update region.
     pub x: usize,
+    /// Y coordinate of the update region.
     pub y: usize,
+    /// Width of the update region.
     pub width: usize,
+    /// Height of the update region.
     pub height: usize,
+    /// Bitmap data to upload (row-major).
     pub pixels: Vec<u8>,
 }
 
+/// Describes a glyph instance to be drawn.
 pub struct GlyphInstance<T> {
+    /// Index of the texture in the atlas array.
     pub texture_index: usize,
+    /// UV coordinates in the texture atlas.
     pub uv_rect: Box2D<f32, euclid::UnknownUnit>,
+    /// Screen coordinates where the glyph should be drawn.
     pub screen_rect: Box2D<f32, euclid::UnknownUnit>,
+    /// User data associated with this glyph.
     pub user_data: T,
 }
 
+/// Describes a standalone large glyph to be drawn separately.
 pub struct StandaloneGlyph<T> {
+    /// Width of the glyph image.
     pub width: usize,
+    /// Height of the glyph image.
     pub height: usize,
+    /// Bitmap data of the glyph.
     pub pixels: Vec<u8>,
+    /// Screen coordinates where the glyph should be drawn.
     pub screen_rect: Box2D<f32, euclid::UnknownUnit>,
+    /// User data associated with this glyph.
     pub user_data: T,
 }
 
+/// Generic GPU renderer that manages an atlas and produces draw commands.
+///
+/// This renderer does not depend on a specific graphics API. Instead, it calculates
+/// atlas updates and instance data, which are passed to callbacks for the actual
+/// API-specific rendering (e.g., wgpu).
 pub struct GpuRenderer {
     cache: GpuCache,
 }
 
 impl GpuRenderer {
+    /// Creates a new GPU renderer with the provided cache configuration.
     pub fn new(configs: &[GpuCacheConfig]) -> Self {
         Self {
             cache: GpuCache::new(configs),
         }
     }
 
+    /// Clears the cache.
     pub fn clear_cache(&mut self) {
         self.cache.clear();
     }
 
+    /// Renders the layout, producing atlas updates and draw calls via callbacks.
     pub fn render<T: Clone + Copy>(
         &mut self,
         layout: &TextLayout<T>,

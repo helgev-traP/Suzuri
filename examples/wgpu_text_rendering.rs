@@ -146,7 +146,6 @@ async fn run() {
             &device,
             &mut encoder,
             &target_view,
-            [width as f32, height as f32],
         );
         measurements.push(start.elapsed());
 

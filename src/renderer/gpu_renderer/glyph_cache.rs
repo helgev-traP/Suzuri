@@ -188,7 +188,7 @@ mod cache_state {
         }
     }
 
-    /// internal helpers to opperate lru's linked list
+    /// Internal helpers to operate the LRU linked list.
     impl CacheState {
         fn push_front(&mut self, glyph_id: GlyphId) -> usize {
             if self.lru_map.contains_key(&glyph_id) {
@@ -297,10 +297,14 @@ mod cache_state {
     }
 }
 
+/// Configuration for the GPU glyph cache.
 #[derive(Clone)]
 pub struct GpuCacheConfig {
+    /// Size of each tile in pixels.
     pub tile_size: NonZeroUsize,
+    /// Number of tiles along one axis of the texture.
     pub tiles_per_axis: NonZeroUsize,
+    /// Size of the texture in pixels.
     pub texture_size: NonZeroUsize,
 }
 
@@ -372,9 +376,13 @@ impl CacheAtlas {
     }
 }
 
+/// Information about a cached glyph.
 pub struct GpuCacheItem {
+    /// Index of the texture in the atlas array.
     pub texture_index: usize,
+    /// Size of the texture.
     pub texture_size: usize,
+    /// Region of the texture containing the glyph.
     pub glyph_box: Box2D<usize, UnknownUnit>,
 }
 
@@ -397,13 +405,17 @@ impl GpuCacheItem {
     }
 }
 
+#[doc(hidden)]
 pub enum GetOrPushResult {
     Hit,
     NeedToUpload,
 }
 
+/// Strategy for cache eviction and selection.
 pub enum GpuCacheStrategy {
+    /// Fixed strategy: only inserts into specific atlas based on size.
     Fixed,
+    /// Fallback strategy: tries to insert into any suitable atlas, handling overflow better.
     Fallback,
 }
 
@@ -720,17 +732,20 @@ impl FallbackGpuCache {
     }
 }
 
+/// Manages the GPU glyph cache, using one of the available strategies.
 pub enum GpuCache {
     Fixed(FixedGpuCache),
     Fallback(FallbackGpuCache),
 }
 
 impl GpuCache {
+    /// Creates a new cache with default (Fallback) strategy.
     pub fn new(configs: &[GpuCacheConfig]) -> Self {
         // Default to Fallback strategy as requested for improvement
         Self::Fallback(FallbackGpuCache::new(configs))
     }
 
+    /// Creates a new cache with specific strategy.
     pub fn new_with_strategy(configs: &[GpuCacheConfig], strategy: GpuCacheStrategy) -> Self {
         match strategy {
             GpuCacheStrategy::Fixed => Self::Fixed(FixedGpuCache::new(configs)),
@@ -738,6 +753,7 @@ impl GpuCache {
         }
     }
 
+    /// Clears the cache.
     pub fn clear(&mut self) {
         match self {
             Self::Fixed(c) => c.clear(),
@@ -745,6 +761,7 @@ impl GpuCache {
         }
     }
 
+    /// Marks start of a new batch.
     pub fn new_batch(&mut self) {
         match self {
             Self::Fixed(c) => c.new_batch(),
@@ -752,6 +769,7 @@ impl GpuCache {
         }
     }
 
+    /// Gets existing or adds new glyph, marking it used.
     pub fn get_or_push_and_protect(
         &mut self,
         glyph_id: &GlyphId,

@@ -6,6 +6,11 @@ use crate::{
     text::TextLayout,
 };
 
+/// A CPU-based debug renderer that emulates GPU atlas rendering.
+///
+/// This renderer uses the same atlas and caching logic as `GpuRenderer` but
+/// performs all rendering on the CPU. It is useful for debugging and testing
+/// the GPU rendering pipeline without requiring actual GPU access.
 pub struct CpuDebugRenderer {
     gpu_renderer: GpuRenderer,
     atlases: std::cell::RefCell<Vec<Vec<u8>>>, // List of atlas textures (grayscale)
@@ -13,6 +18,7 @@ pub struct CpuDebugRenderer {
 }
 
 impl CpuDebugRenderer {
+    /// Creates a new debug renderer with the given cache configuration.
     pub fn new(configs: &[GpuCacheConfig]) -> Self {
         let mut atlases = Vec::new();
         for config in configs {
@@ -27,6 +33,10 @@ impl CpuDebugRenderer {
         }
     }
 
+    /// Renders the layout into an RGBA target buffer.
+    ///
+    /// The `target_buffer` must be `target_width * target_height * 4` bytes.
+    /// Color blending uses premultiplied alpha compositing.
     pub fn render<T: Clone + Copy + Into<[f32; 4]>>(
         &mut self,
         layout: &TextLayout<T>,

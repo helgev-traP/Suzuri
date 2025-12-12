@@ -7,14 +7,59 @@ use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
 use wgpu::util::DeviceExt;
 
+/// Initial capacity for the instance buffer.
+/// Chosen to balance memory usage and typical text rendering workloads
+/// (average paragraph with ~250-500 glyphs, with headroom for multiple draw calls).
+const INITIAL_INSTANCE_CAPACITY: usize = 1024;
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
-pub struct InstanceData {
-    pub screen_rect: [f32; 4], // x, y, w, h
-    pub uv_rect: [f32; 4],     // u, v, w, h
-    pub color: [f32; 4],
-    pub layer: u32,
-    pub _padding: [u32; 3],
+struct InstanceData {
+    screen_rect: [f32; 4], // x, y, w, h
+    uv_rect: [f32; 4],     // u, v, w, h
+    color: [f32; 4],
+    layer: u32,
+    _padding: [u32; 3],
+}
+
+impl InstanceData {
+    /// Returns the vertex buffer layout for instance data.
+    ///
+    /// This layout is shared between the main atlas pipeline and the standalone pipeline.
+    const ATTRIBUTES: &'static [wgpu::VertexAttribute] = &[
+        // screen_rect
+        wgpu::VertexAttribute {
+            offset: 0,
+            shader_location: 0,
+            format: wgpu::VertexFormat::Float32x4,
+        },
+        // uv_rect
+        wgpu::VertexAttribute {
+            offset: 16,
+            shader_location: 1,
+            format: wgpu::VertexFormat::Float32x4,
+        },
+        // color
+        wgpu::VertexAttribute {
+            offset: 32,
+            shader_location: 2,
+            format: wgpu::VertexFormat::Float32x4,
+        },
+        // layer
+        wgpu::VertexAttribute {
+            offset: 48,
+            shader_location: 3,
+            format: wgpu::VertexFormat::Uint32,
+        },
+    ];
+
+    fn vertex_buffer_layout() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<InstanceData>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: Self::ATTRIBUTES,
+        }
+    }
 }
 
 #[repr(C)]
@@ -85,8 +130,15 @@ pub struct WgpuRenderer {
     resources: WgpuResources,
 }
 
+/// Resources used by the renderer, including pipelines, buffers, and textures.
+///
+/// This struct uses `RefCell` for internal mutability, allowing the `render` method
+/// to update resources (like buffers and caches) while retaining an immutable interface
+/// where possible, or satisfying the borrowing rules of helper methods.
 struct WgpuResources {
+    /// Cache of pipelines for different texture formats (e.g., specific swapchain formats).
     pipelines: std::cell::RefCell<HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>>,
+    /// Cache of pipelines for standalone large glyphs.
     standalone_pipelines: std::cell::RefCell<HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>>,
 
     pipeline_layout: wgpu::PipelineLayout,
@@ -94,19 +146,37 @@ struct WgpuResources {
     shader: wgpu::ShaderModule,
     standalone_shader: wgpu::ShaderModule,
 
+    /// The texture atlas array used for caching small glyphs.
     atlas_texture: wgpu::Texture,
     sampler: wgpu::Sampler,
+
+    /// Shared instance buffer for drawing glyph quads. Resizes automatically.
     instance_buffer: std::cell::RefCell<wgpu::Buffer>,
+
     _bind_group_layout: wgpu::BindGroupLayout,
     standalone_bind_group_layout: wgpu::BindGroupLayout,
+
+    /// Uniform buffer for global data (screen size, etc.).
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
+
+    /// Resources for drawing a single large glyph that doesn't fit in the atlas.
     standalone_resources: std::cell::RefCell<Option<StandaloneResources>>,
+
+    /// **Staging Vector for Instance Data**
+    /// Reused across frames to avoid repeated allocations (`Vec::new()`) when building instance data.
+    instance_data_staging: std::cell::RefCell<Vec<InstanceData>>,
+
+    /// **Staging Vector for Pixel Padding**
+    /// Reused across frames to avoid allocations when padding texture data to 256-byte alignment.
+    pixel_staging: std::cell::RefCell<Vec<u8>>,
 }
 
+/// Resources required for rendering a standalone large glyph.
 struct StandaloneResources {
     texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
+    /// Current size of the texture. Used to determine if re-creation is needed.
     size: wgpu::Extent3d,
 }
 
@@ -120,6 +190,11 @@ impl WgpuRenderer {
         configs: &[GpuCacheConfig],
         formats: &[wgpu::TextureFormat],
     ) -> Self {
+        if configs.is_empty() {
+            log::error!("At least one GPU cache config is required");
+            panic!("At least one GPU cache config is required");
+        }
+
         let gpu_renderer = GpuRenderer::new(configs);
 
         // Calculate max dimensions and layers
@@ -127,12 +202,12 @@ impl WgpuRenderer {
             .iter()
             .map(|c| c.texture_size.get())
             .max()
-            .unwrap_or(512) as u32;
+            .expect("Checked above") as u32;
         let max_height = configs
             .iter()
             .map(|c| c.texture_size.get())
             .max()
-            .unwrap_or(512) as u32;
+            .expect("Checked above") as u32;
         let layers = configs.len() as u32;
 
         let atlas_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -255,10 +330,9 @@ impl WgpuRenderer {
             source: wgpu::ShaderSource::Wgsl(STANDALONE_SHADER.into()),
         });
 
-        let instance_capacity = 1024;
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Instance Buffer"),
-            size: (instance_capacity * std::mem::size_of::<InstanceData>()) as u64,
+            size: (INITIAL_INSTANCE_CAPACITY * std::mem::size_of::<InstanceData>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -304,6 +378,8 @@ impl WgpuRenderer {
             globals_buffer,
             globals_bind_group,
             standalone_resources: std::cell::RefCell::new(None),
+            instance_data_staging: std::cell::RefCell::new(Vec::new()),
+            pixel_staging: std::cell::RefCell::new(Vec::new()),
         };
 
         for &format in formats {
@@ -317,10 +393,52 @@ impl WgpuRenderer {
         }
     }
 
+    /// Clears the renderer's cache, freeing GPU memory.
     pub fn clear_cache(&mut self) {
         self.gpu_renderer.clear_cache();
     }
+}
 
+/// Abstraction for managing a render pass.
+///
+/// This trait allows `WgpuRenderer` to work with different contexts, such as a direct
+/// `RenderPass` creation or a deferred command recording mechanism.
+/// It primarily exists to break the borrow checker deadlock where `encoder` (mutable)
+/// and `texture_view` (immutable) might be tied together inconveniently.
+pub trait WgpuRenderPassController {
+    /// Returns the mutable command encoder to record copy commands.
+    fn encoder(&mut self) -> &mut wgpu::CommandEncoder;
+
+    /// Creates a new `RenderPass`.
+    /// Note: The lifetime is tied to the controller to enforce correct usage scope.
+    fn create_pass(&mut self) -> wgpu::RenderPass<'_>;
+
+    /// Returns the target texture format for pipeline selection.
+    fn format(&self) -> wgpu::TextureFormat;
+
+    /// Returns the target screen size in pixels.
+    fn target_size(&self) -> [f32; 2];
+}
+
+impl<T: WgpuRenderPassController + ?Sized> WgpuRenderPassController for &mut T {
+    fn encoder(&mut self) -> &mut wgpu::CommandEncoder {
+        (**self).encoder()
+    }
+
+    fn create_pass(&mut self) -> wgpu::RenderPass<'_> {
+        (**self).create_pass()
+    }
+
+    fn format(&self) -> wgpu::TextureFormat {
+        (**self).format()
+    }
+
+    fn target_size(&self) -> [f32; 2] {
+        (**self).target_size()
+    }
+}
+
+impl WgpuRenderer {
     pub fn render<T: Into<[f32; 4]> + Copy>(
         &mut self,
         layout: &TextLayout<T>,
@@ -328,14 +446,79 @@ impl WgpuRenderer {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
-        screen_size: [f32; 2],
+    ) {
+        struct SimpleWgpuRenderContext<'a> {
+            encoder: &'a mut wgpu::CommandEncoder,
+            view: &'a wgpu::TextureView,
+            first_call: bool,
+        }
+
+        impl<'a> WgpuRenderPassController for SimpleWgpuRenderContext<'a> {
+            fn encoder(&mut self) -> &mut wgpu::CommandEncoder {
+                self.encoder
+            }
+
+            fn create_pass(&mut self) -> wgpu::RenderPass<'_> {
+                let load = if self.first_call {
+                    self.first_call = false;
+                    wgpu::LoadOp::Clear(wgpu::Color::BLACK)
+                } else {
+                    wgpu::LoadOp::Load
+                };
+
+                self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("WgpuRenderer Render Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: self.view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                })
+            }
+
+            fn format(&self) -> wgpu::TextureFormat {
+                self.view.texture().format()
+            }
+
+            fn target_size(&self) -> [f32; 2] {
+                let size = self.view.texture().size();
+                [size.width as f32, size.height as f32]
+            }
+        }
+
+        let mut ctx = SimpleWgpuRenderContext {
+            encoder,
+            view,
+            first_call: true,
+        };
+
+        self.render_to(layout, font_storage, device, &mut ctx);
+    }
+
+    /// Renders the layout using a custom render pass controller.
+    ///
+    /// This method allows for more flexible rendering scenarios where the render pass
+    /// creation or management is handled externally via the `WgpuRenderPassController` trait.
+    pub fn render_to<T: Into<[f32; 4]> + Copy>(
+        &mut self,
+        layout: &TextLayout<T>,
+        font_storage: &mut FontStorage,
+        device: &wgpu::Device,
+        controller: &mut impl WgpuRenderPassController,
     ) {
         // Reset offset at the beginning of the frame
         let current_offset = std::cell::Cell::new(0);
 
         // Update globals
         let globals = Globals {
-            screen_size,
+            screen_size: controller.target_size(),
             _padding: [0.0; 2],
         };
         let globals_staging_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -343,7 +526,7 @@ impl WgpuRenderer {
             contents: bytemuck::bytes_of(&globals),
             usage: wgpu::BufferUsages::COPY_SRC,
         });
-        encoder.copy_buffer_to_buffer(
+        controller.encoder().copy_buffer_to_buffer(
             &globals_staging_buffer,
             0,
             &self.resources.globals_buffer,
@@ -351,29 +534,32 @@ impl WgpuRenderer {
             std::mem::size_of::<Globals>() as u64,
         );
 
-        let encoder_cell = std::cell::RefCell::new(encoder);
+        // Create a thread-local-like cell for the controller to share it with closures below
+        let ctx_cell = std::cell::RefCell::new(controller);
 
+        // Delegate to GpuRenderer to calculate layout and cache glyphs
         self.gpu_renderer.render(
             layout,
             font_storage,
+            // Callback: Update Texture Atlas
             &mut |updates: &[AtlasUpdate]| {
-                self.resources
-                    .update_atlas(device, &mut encoder_cell.borrow_mut(), updates);
+                let mut ctx = ctx_cell.borrow_mut();
+                self.resources.update_atlas(device, ctx.encoder(), updates);
             },
+            // Callback: Draw standard glyphs (batched)
             &mut |instances: &[GlyphInstance<T>]| {
                 self.resources.draw_instances(
                     device,
-                    &mut encoder_cell.borrow_mut(),
-                    view,
+                    &mut *ctx_cell.borrow_mut(),
                     &current_offset,
                     instances,
                 );
             },
+            // Callback: Draw standalone glyph (large)
             &mut |standalone: &StandaloneGlyph<T>| {
                 self.resources.draw_standalone(
                     device,
-                    &mut encoder_cell.borrow_mut(),
-                    view,
+                    &mut *ctx_cell.borrow_mut(),
                     &current_offset,
                     standalone,
                 );
@@ -394,36 +580,7 @@ impl WgpuResources {
         }
 
         // Create new pipeline
-        let instance_buffer_layout = wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<InstanceData>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &[
-                // screen_rect
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                // uv_rect
-                wgpu::VertexAttribute {
-                    offset: 16,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                // color
-                wgpu::VertexAttribute {
-                    offset: 32,
-                    shader_location: 2,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                // layer
-                wgpu::VertexAttribute {
-                    offset: 48,
-                    shader_location: 3,
-                    format: wgpu::VertexFormat::Uint32,
-                },
-            ],
-        };
+        let instance_buffer_layout = InstanceData::vertex_buffer_layout();
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("WgpuRenderer Pipeline"),
@@ -472,36 +629,7 @@ impl WgpuResources {
             return pipeline.clone();
         }
 
-        let instance_buffer_layout = wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<InstanceData>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &[
-                // screen_rect
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                // uv_rect
-                wgpu::VertexAttribute {
-                    offset: 16,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                // color
-                wgpu::VertexAttribute {
-                    offset: 32,
-                    shader_location: 2,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                // layer
-                wgpu::VertexAttribute {
-                    offset: 48,
-                    shader_location: 3,
-                    format: wgpu::VertexFormat::Uint32,
-                },
-            ],
-        };
+        let instance_buffer_layout = InstanceData::vertex_buffer_layout();
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("WgpuRenderer Standalone Pipeline"),
@@ -543,112 +671,17 @@ impl WgpuResources {
         pipeline
     }
 
-    fn update_atlas(
+    /// Ensures the instance buffer has enough capacity to hold `needed_bytes`.
+    ///
+    /// If the buffer is too small, it creates a new one with at least double the current capacity
+    /// (geometric growth) to minimize the frequency of re-allocations.
+    fn ensure_instance_buffer_capacity(
         &self,
         device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        updates: &[AtlasUpdate],
+        needed_bytes: u64,
+        instance_buffer: &mut wgpu::Buffer,
     ) {
-        for update in updates {
-            let width = update.width as u32;
-            let height = update.height as u32;
-
-            if width == 0 || height == 0 {
-                continue;
-            }
-
-            let bytes_per_row = width;
-            let padded_bytes_per_row = (bytes_per_row + 255) & !255;
-            let padding = padded_bytes_per_row - bytes_per_row;
-
-            let data = if padding == 0 {
-                std::borrow::Cow::Borrowed(&update.pixels)
-            } else {
-                let mut padded = Vec::with_capacity((padded_bytes_per_row * height) as usize);
-                for row in 0..height {
-                    let src_start = (row * width) as usize;
-                    let src_end = src_start + width as usize;
-                    if src_end <= update.pixels.len() {
-                        padded.extend_from_slice(&update.pixels[src_start..src_end]);
-                        padded.extend(std::iter::repeat_n(0, padding as usize));
-                    }
-                }
-                std::borrow::Cow::Owned(padded)
-            };
-
-            let staging_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Atlas Staging Buffer"),
-                contents: &data,
-                usage: wgpu::BufferUsages::COPY_SRC,
-            });
-
-            encoder.copy_buffer_to_texture(
-                wgpu::TexelCopyBufferInfo {
-                    buffer: &staging_buffer,
-                    layout: wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(padded_bytes_per_row),
-                        rows_per_image: Some(height),
-                    },
-                },
-                wgpu::TexelCopyTextureInfo {
-                    texture: &self.atlas_texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d {
-                        x: update.x as u32,
-                        y: update.y as u32,
-                        z: update.texture_index as u32,
-                    },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-            );
-        }
-    }
-
-    fn draw_instances<T: Into<[f32; 4]> + Copy>(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-        current_offset: &std::cell::Cell<u64>,
-        instances: &[GlyphInstance<T>],
-    ) {
-        if instances.is_empty() {
-            return;
-        }
-
-        let mut instance_buffer = self.instance_buffer.borrow_mut();
-
-        let instance_data: Vec<InstanceData> = instances
-            .iter()
-            .map(|inst| InstanceData {
-                screen_rect: [
-                    inst.screen_rect.min.x,
-                    inst.screen_rect.min.y,
-                    inst.screen_rect.width(),
-                    inst.screen_rect.height(),
-                ],
-                uv_rect: [
-                    inst.uv_rect.min.x,
-                    inst.uv_rect.min.y,
-                    inst.uv_rect.width(),
-                    inst.uv_rect.height(),
-                ],
-                color: inst.user_data.into(),
-                layer: inst.texture_index as u32,
-                _padding: [0; 3],
-            })
-            .collect();
-
-        let instance_size = std::mem::size_of::<InstanceData>() as u64;
         let current_capacity = instance_buffer.size();
-        let needed_bytes = current_offset.get() + instance_data.len() as u64 * instance_size;
-
         if needed_bytes > current_capacity {
             let new_capacity = needed_bytes.max(current_capacity * 2);
             let new_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -657,78 +690,29 @@ impl WgpuResources {
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-
             *instance_buffer = new_buffer;
         }
-
-        let offset = current_offset.get();
-        let bytes = bytemuck::cast_slice(&instance_data);
-
-        let staging_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Instance Staging Buffer"),
-            contents: bytes,
-            usage: wgpu::BufferUsages::COPY_SRC,
-        });
-
-        encoder.copy_buffer_to_buffer(
-            &staging_buffer,
-            0,
-            &instance_buffer,
-            offset,
-            bytes.len() as u64,
-        );
-
-        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Text Render Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
-
-        // Use cached pipeline or create new one based on format
-        let pipeline = self.get_pipeline(device, view.texture().format());
-        rpass.set_pipeline(&pipeline);
-        rpass.set_bind_group(0, &self.globals_bind_group, &[]);
-        rpass.set_vertex_buffer(
-            0,
-            instance_buffer.slice(offset..offset + bytes.len() as u64),
-        );
-        rpass.draw(0..4, 0..instance_data.len() as u32);
-
-        current_offset.set(offset + bytes.len() as u64);
     }
 
-    fn draw_standalone<T: Into<[f32; 4]> + Copy>(
+    /// Ensures that standalone resources (texture, bind group) are sufficient for the needed dimensions.
+    ///
+    /// # Power-of-Two Sizing
+    /// To avoid recreating the texture every time the glyph size changes slightly, the texture dimensions
+    /// are rounded up to the next power of two (e.g., 100x100 -> 128x128). This significantly stabilizes
+    /// GPU resource churn for variable-sized large glyphs.
+    fn ensure_standalone_resources(
         &self,
         device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-        current_offset: &std::cell::Cell<u64>,
-        standalone: &StandaloneGlyph<T>,
-    ) {
+        needed_width: u32,
+        needed_height: u32,
+    ) -> std::cell::RefMut<'_, Option<StandaloneResources>> {
         let mut resources_ref = self.standalone_resources.borrow_mut();
-        let mut instance_buffer = self.instance_buffer.borrow_mut();
 
-        let needed_width = standalone.width as u32;
-        let needed_height = standalone.height as u32;
-
-        let mut recreate = false;
-        if let Some(res) = resources_ref.as_ref() {
-            if res.size.width < needed_width || res.size.height < needed_height {
-                recreate = true;
-            }
+        let recreate = if let Some(res) = resources_ref.as_ref() {
+            res.size.width < needed_width || res.size.height < needed_height
         } else {
-            recreate = true;
-        }
+            true
+        };
 
         if recreate {
             let current_size = resources_ref
@@ -743,8 +727,8 @@ impl WgpuResources {
             let new_height = current_size.height.max(needed_height);
 
             let size = wgpu::Extent3d {
-                width: new_width,
-                height: new_height,
+                width: new_width.next_power_of_two(),
+                height: new_height.next_power_of_two(),
                 depth_or_array_layers: 1,
             };
 
@@ -787,29 +771,196 @@ impl WgpuResources {
             });
         }
 
-        let resources = resources_ref.as_ref().expect(
-            "Logic bug: resources_ref should be initialized. If it was previously None, the 'recreate' flag ensures it is initialized above.",
-        );
+        resources_ref
+    }
 
-        // Prepare data with 256-byte alignment for copy_buffer_to_texture
-        let width = standalone.width as u32;
-        let height = standalone.height as u32;
+    /// Prepares pixel data for texture upload, handling WGPU's alignment requirements.
+    ///
+    /// WGPU (and underlying APIs like Vulkan/DirectX) requires that the "bytes per row" in a copy command
+    /// be a multiple of **256 bytes**. If the image width doesn't match this alignment, we must
+    /// copy the data into a new buffer with padding bytes added to the end of each row.
+    ///
+    /// - `pixel_staging`: A reusable vector to avoid allocation when padding is needed.
+    fn prepare_padded_data<'a>(
+        pixel_staging: &'a mut Vec<u8>,
+        pixels: &'a [u8],
+        width: u32,
+        height: u32,
+    ) -> (std::borrow::Cow<'a, [u8]>, u32) {
         let bytes_per_row = width;
+        // Align to 256 bytes: (val + 255) & !255 checks the next multiple of 256.
         let padded_bytes_per_row = (bytes_per_row + 255) & !255;
         let padding = padded_bytes_per_row - bytes_per_row;
 
         let data = if padding == 0 {
-            std::borrow::Cow::Borrowed(&standalone.pixels)
+            // No padding needed, use original data directly (zero-copy).
+            std::borrow::Cow::Borrowed(pixels)
         } else {
-            let mut padded = Vec::with_capacity((padded_bytes_per_row * height) as usize);
+            // Padding needed, reuse staging buffer.
+            pixel_staging.clear();
+            pixel_staging.reserve((padded_bytes_per_row * height) as usize);
+
             for row in 0..height {
                 let src_start = (row * width) as usize;
                 let src_end = src_start + width as usize;
-                padded.extend_from_slice(&standalone.pixels[src_start..src_end]);
-                padded.extend(std::iter::repeat_n(0, padding as usize));
+                if src_end <= pixels.len() {
+                    pixel_staging.extend_from_slice(&pixels[src_start..src_end]);
+                    // Append zeros for alignment
+                    pixel_staging.extend(std::iter::repeat_n(0, padding as usize));
+                }
             }
-            std::borrow::Cow::Owned(padded)
+            std::borrow::Cow::Borrowed(pixel_staging.as_slice())
         };
+
+        (data, padded_bytes_per_row)
+    }
+
+    fn update_atlas(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        updates: &[AtlasUpdate],
+    ) {
+        let mut pixel_staging = self.pixel_staging.borrow_mut();
+
+        for update in updates {
+            let width = update.width as u32;
+            let height = update.height as u32;
+
+            if width == 0 || height == 0 {
+                continue;
+            }
+
+            let (data, padded_bytes_per_row) =
+                Self::prepare_padded_data(&mut pixel_staging, &update.pixels, width, height);
+
+            let staging_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Atlas Staging Buffer"),
+                contents: &data,
+                usage: wgpu::BufferUsages::COPY_SRC,
+            });
+
+            encoder.copy_buffer_to_texture(
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &staging_buffer,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(padded_bytes_per_row),
+                        rows_per_image: Some(height),
+                    },
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.atlas_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: update.x as u32,
+                        y: update.y as u32,
+                        z: update.texture_index as u32,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+    }
+
+    fn draw_instances<T: Into<[f32; 4]> + Copy>(
+        &self,
+        device: &wgpu::Device,
+        controller: &mut impl WgpuRenderPassController,
+        current_offset: &std::cell::Cell<u64>,
+        instances: &[GlyphInstance<T>],
+    ) {
+        if instances.is_empty() {
+            return;
+        }
+
+        let mut instance_buffer = self.instance_buffer.borrow_mut();
+
+        let mut instance_data = self.instance_data_staging.borrow_mut();
+        instance_data.clear();
+        instance_data.extend(instances.iter().map(|inst| InstanceData {
+            screen_rect: [
+                inst.screen_rect.min.x,
+                inst.screen_rect.min.y,
+                inst.screen_rect.width(),
+                inst.screen_rect.height(),
+            ],
+            uv_rect: [
+                inst.uv_rect.min.x,
+                inst.uv_rect.min.y,
+                inst.uv_rect.width(),
+                inst.uv_rect.height(),
+            ],
+            color: inst.user_data.into(),
+            layer: inst.texture_index as u32,
+            _padding: [0; 3],
+        }));
+
+        let instance_size = std::mem::size_of::<InstanceData>() as u64;
+        let needed_bytes = current_offset.get() + instance_data.len() as u64 * instance_size;
+
+        self.ensure_instance_buffer_capacity(device, needed_bytes, &mut instance_buffer);
+
+        let offset = current_offset.get();
+        let bytes = bytemuck::cast_slice(&instance_data);
+
+        let staging_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Instance Staging Buffer"),
+            contents: bytes,
+            usage: wgpu::BufferUsages::COPY_SRC,
+        });
+
+        controller.encoder().copy_buffer_to_buffer(
+            &staging_buffer,
+            0,
+            &instance_buffer,
+            offset,
+            bytes.len() as u64,
+        );
+
+        let format = controller.format();
+        let mut rpass = controller.create_pass();
+
+        // Use cached pipeline or create new one based on format
+        let pipeline = self.get_pipeline(device, format);
+        rpass.set_pipeline(&pipeline);
+        rpass.set_bind_group(0, &self.globals_bind_group, &[]);
+        rpass.set_vertex_buffer(
+            0,
+            instance_buffer.slice(offset..offset + bytes.len() as u64),
+        );
+        rpass.draw(0..4, 0..instance_data.len() as u32);
+
+        current_offset.set(offset + bytes.len() as u64);
+    }
+
+    fn draw_standalone<T: Into<[f32; 4]> + Copy>(
+        &self,
+        device: &wgpu::Device,
+        controller: &mut impl WgpuRenderPassController,
+        current_offset: &std::cell::Cell<u64>,
+        standalone: &StandaloneGlyph<T>,
+    ) {
+        let needed_width = standalone.width as u32;
+        let needed_height = standalone.height as u32;
+
+        let resources_ref = self.ensure_standalone_resources(device, needed_width, needed_height);
+        let resources = resources_ref
+            .as_ref()
+            .expect("Logic bug: resources_ref should be initialized.");
+
+        // Prepare data with 256-byte alignment for copy_buffer_to_texture
+        let width = standalone.width as u32;
+        let height = standalone.height as u32;
+
+        let mut pixel_staging = self.pixel_staging.borrow_mut();
+        let (data, padded_bytes_per_row) =
+            Self::prepare_padded_data(&mut pixel_staging, &standalone.pixels, width, height);
 
         let staging_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Standalone Staging Buffer"),
@@ -817,7 +968,7 @@ impl WgpuResources {
             usage: wgpu::BufferUsages::COPY_SRC,
         });
 
-        encoder.copy_buffer_to_texture(
+        controller.encoder().copy_buffer_to_texture(
             wgpu::TexelCopyBufferInfo {
                 buffer: &staging_buffer,
                 layout: wgpu::TexelCopyBufferLayout {
@@ -859,19 +1010,10 @@ impl WgpuResources {
 
         // Use the shared instance buffer for standalone glyphs too
         let instance_size = std::mem::size_of::<InstanceData>() as u64;
-        let current_capacity = instance_buffer.size();
+        let mut instance_buffer = self.instance_buffer.borrow_mut();
         let needed_bytes = current_offset.get() + instance_size;
 
-        if needed_bytes > current_capacity {
-            let new_capacity = needed_bytes.max(current_capacity * 2);
-            let new_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Instance Buffer"),
-                size: new_capacity,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            *instance_buffer = new_buffer;
-        }
+        self.ensure_instance_buffer_capacity(device, needed_bytes, &mut instance_buffer);
 
         let offset = current_offset.get();
         let bytes = bytemuck::bytes_of(&instance_data);
@@ -882,7 +1024,7 @@ impl WgpuResources {
             usage: wgpu::BufferUsages::COPY_SRC,
         });
 
-        encoder.copy_buffer_to_buffer(
+        controller.encoder().copy_buffer_to_buffer(
             &staging_buffer,
             0,
             &instance_buffer,
@@ -890,23 +1032,10 @@ impl WgpuResources {
             bytes.len() as u64,
         );
 
-        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Standalone Render Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
+        let format = controller.format();
+        let mut rpass = controller.create_pass();
 
-        let pipeline = self.get_standalone_pipeline(device, view.texture().format());
+        let pipeline = self.get_standalone_pipeline(device, format);
         rpass.set_pipeline(&pipeline);
         rpass.set_bind_group(0, &resources.bind_group, &[]);
         rpass.set_vertex_buffer(

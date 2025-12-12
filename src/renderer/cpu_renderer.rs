@@ -18,6 +18,7 @@ impl CpuRenderer {
         }
     }
 
+    /// Clears the renderer's cache.
     pub fn clear_cache(&mut self) {
         self.cache.clear();
     }
