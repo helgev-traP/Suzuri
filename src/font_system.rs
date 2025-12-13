@@ -13,7 +13,7 @@ use crate::{
 };
 
 #[cfg(feature = "wgpu")]
-use crate::renderer::WgpuRenderer;
+use crate::renderer::{WgpuRenderPassController, WgpuRenderer};
 
 /// High-level entry point for the text rendering system.
 ///
@@ -296,13 +296,37 @@ impl FontSystem {
     /// Renders text using the WGPU renderer.
     pub fn wgpu_render<T: Into<[f32; 4]> + Copy>(
         &self,
-        layout: &TextLayout<T>,
+        text_layout: &TextLayout<T>,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
     ) {
         if let Some(renderer) = &mut *self.wgpu_renderer.lock() {
-            renderer.render(layout, &mut self.font_storage.lock(), device, encoder, view);
+            renderer.render(
+                text_layout,
+                &mut self.font_storage.lock(),
+                device,
+                encoder,
+                view,
+            );
+        } else {
+            log::warn!("Render called before wgpu renderer initialized.");
+        }
+    }
+
+    pub fn wgpu_render_to<T: Into<[f32; 4]> + Copy>(
+        &self,
+        text_layout: &TextLayout<T>,
+        device: &wgpu::Device,
+        controller: &mut impl WgpuRenderPassController,
+    ) {
+        if let Some(renderer) = &mut *self.wgpu_renderer.lock() {
+            renderer.render_to(
+                text_layout,
+                &mut self.font_storage.lock(),
+                device,
+                controller,
+            );
         } else {
             log::warn!("Render called before wgpu renderer initialized.");
         }
