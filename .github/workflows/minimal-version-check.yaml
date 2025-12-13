@@ -27,7 +27,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Update to minimal versions
-        run: cargo update -Z direct-minimal-versions
+        run: cargo +nightly update -Z direct-minimal-versions
 
       - name: Check with minimal versions
         run: cargo hack check --rust-version --workspace --all-features --ignore-private --clean-per-run --remove-dev-deps
