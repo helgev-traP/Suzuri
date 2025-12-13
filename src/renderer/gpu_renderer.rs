@@ -52,9 +52,68 @@ pub struct StandaloneGlyph<T> {
 
 /// Generic GPU renderer that manages an atlas and produces draw commands.
 ///
-/// This renderer does not depend on a specific graphics API. Instead, it calculates
-/// atlas updates and instance data, which are passed to callbacks for the actual
-/// API-specific rendering (e.g., wgpu).
+/// ## Overview
+///
+/// `GpuRenderer` provides a graphics-API-independent implementation of text rendering.
+/// It solves the common problems of:
+///
+/// 1.  **Atlas Management**: Packing glyphs into texture atlases efficiently.
+/// 2.  **Quad Generation**: Calculating vertices and UV coordinates for each glyph.
+///
+/// It **does not** issue actual draw calls or manage GPU resources directly (buffers, textures).
+/// Instead, it invokes callbacks provided by the user to perform these actions.
+/// This allows it to be used with any graphics backend (WGPU, OpenGL, Vulkan, DirectX, etc.).
+///
+/// For a concrete WGPU implementation, see [`crate::renderer::WgpuRenderer`].
+///
+/// ## Integration
+///
+/// This component can be used in two ways:
+/// -   **Through [`crate::FontSystem`]**: Provides a high-level API where `FontSystem` manages the renderer instance.
+/// -   **Standalone**: You can instantiate and use this renderer directly. This offers more granular control over resource management and rendering.
+///
+/// ## Usage
+///
+/// ```rust,no_run
+/// use suzuri::{
+///     FontSystem, fontdb,
+///     renderer::{GpuCacheConfig, AtlasUpdate, GlyphInstance, StandaloneGlyph},
+///     text::{TextData, TextElement, TextLayoutConfig}
+/// };
+/// use std::num::NonZeroUsize;
+///
+/// let font_system = FontSystem::new();
+/// font_system.load_system_fonts();
+///
+/// // 1. Initialize Renderer
+/// let cache_configs = [
+///     GpuCacheConfig {
+///         texture_size: NonZeroUsize::new(1024).unwrap(),
+///         tile_size: NonZeroUsize::new(32).unwrap(), // one side length
+///         tiles_per_axis: NonZeroUsize::new(32).unwrap(),
+///     },
+/// ];
+/// font_system.gpu_init(&cache_configs);
+///
+/// // 2. Layout Text
+/// let mut data = TextData::<u32>::new();
+/// // ... (append text elements) ...
+/// let layout = font_system.layout_text(&data, &TextLayoutConfig::default());
+///
+/// // 3. Render (Generic Loop)
+/// font_system.gpu_render(
+///     &layout,
+///     |updates: &[AtlasUpdate]| {
+///         // Upload 'pixels' to texture 'texture_index' at (x, y)
+///     },
+///     |instances: &[GlyphInstance<u32>]| {
+///         // Add instances to a vertex buffer or draw them directly
+///     },
+///     |standalone: &StandaloneGlyph<u32>| {
+///         // Handle large glyphs separately (e.g. create a temporary texture)
+///     }
+/// );
+/// ```
 pub struct GpuRenderer {
     cache: GpuCache,
 }

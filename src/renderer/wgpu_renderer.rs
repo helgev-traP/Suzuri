@@ -71,8 +71,69 @@ struct Globals {
 
 /// A text renderer using `wgpu` for hardware-accelerated rendering.
 ///
-/// This renderer efficiently draws text using a texture atlas and GPU instancing.
-/// It supports caching glyphs on the GPU and batching draw calls.
+/// ## Overview
+///
+/// `WgpuRenderer` is a high-level wrapper around [`GpuRenderer`] tailored for the WGPU ecosystem.
+/// It handles all GPU resource management, including:
+///
+/// *   **Texture Atlases**: Creating and updating textures for caching glyphs.
+/// *   **Pipelines**: Managing render pipelines for different texture formats.
+/// *   **Buffers**: Handling vertex/index/uniform buffers.
+/// *   **Shaders**: Providing built-in WGSL shaders for text rendering.
+///
+/// It supports **Premultiplied Alpha** blending for correct color composition.
+///
+/// ## Integration
+///
+/// This component can be used in two ways:
+/// -   **Through [`crate::FontSystem`]**: Provides a high-level API where `FontSystem` manages the renderer instance.
+/// -   **Standalone**: You can instantiate and use this renderer directly. This offers more granular control over resource management and rendering.
+///
+/// ## Usage
+///
+/// ```rust,no_run
+/// use suzuri::{
+///     FontSystem, fontdb,
+///     renderer::GpuCacheConfig,
+///     text::{TextData, TextElement, TextLayoutConfig}
+/// };
+/// use std::num::NonZeroUsize;
+///
+/// // Assume standard wgpu setup (device, queue, etc.)
+/// # async fn example() {
+/// # let (device, queue): (wgpu::Device, wgpu::Queue) = todo!();
+/// # let texture_format = wgpu::TextureFormat::Bgra8Unorm;
+/// # let view: wgpu::TextureView = todo!();
+/// # let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+///
+/// let font_system = FontSystem::new();
+/// font_system.load_system_fonts();
+///
+/// // 1. Initialize Renderer
+/// let cache_configs = [
+///     GpuCacheConfig {
+///         texture_size: NonZeroUsize::new(1024).unwrap(),
+///         tile_size: NonZeroUsize::new(32).unwrap(), // one side length
+///         tiles_per_axis: NonZeroUsize::new(32).unwrap(),
+///     },
+/// ];
+/// // Pre-compile pipeline for the target format
+/// font_system.wgpu_init(&device, &cache_configs, &[texture_format]);
+///
+/// // 2. Layout Text
+/// let mut data: TextData<[f32; 4]> = TextData::new();
+/// // ... (append text elements) ...
+/// let layout = font_system.layout_text(&data, &TextLayoutConfig::default());
+///
+/// // 3. Render
+/// font_system.wgpu_render(
+///     &layout,
+///     &device,
+///     &mut encoder,
+///     &view
+/// );
+/// # }
+/// ```
 ///
 /// # Color Handling
 ///
@@ -92,7 +153,11 @@ struct Globals {
 ///
 /// To avoid runtime hitches, you can pre-warm the cache by supplying expected formats
 /// during initialization:
-/// ```rust,ignore
+/// ```rust,no_run
+/// # use suzuri::renderer::{WgpuRenderer, GpuCacheConfig};
+/// # use std::num::NonZeroUsize;
+/// # let (device, queue): (wgpu::Device, wgpu::Queue) = todo!();
+/// # let cache_configs = [];
 /// let renderer = WgpuRenderer::new(
 ///     &device,
 ///     &cache_configs,
@@ -105,14 +170,20 @@ struct Globals {
 /// 2. Prepare text layout using `FontSystem`.
 /// 3. Call `render` inside your generic render pass.
 ///
-/// ```rust,ignore
+/// ```rust,no_run
+/// # use suzuri::{renderer::WgpuRenderer, text::TextLayout, font_storage::FontStorage};
+/// # let mut renderer: WgpuRenderer = todo!();
+/// # let (device, queue): (wgpu::Device, wgpu::Queue) = todo!();
+/// # let mut encoder: wgpu::CommandEncoder = todo!();
+/// # let texture_view: wgpu::TextureView = todo!();
+/// # let layout: TextLayout<[f32; 4]> = todo!();
+/// # let mut font_storage: FontStorage = todo!();
 /// renderer.render(
-///     &device,
 ///     &layout,
 ///     &mut font_storage,
-///     &texture_view,
+///     &device,
 ///     &mut encoder,
-///     [screen_width, screen_height],
+///     &texture_view,
 /// );
 /// ```
 ///
@@ -185,6 +256,11 @@ const SHADER: &str = include_str!("wgpu_renderer/wgpu_renderer_shader.wgsl");
 const STANDALONE_SHADER: &str = include_str!("wgpu_renderer/wgpu_renderer_standalone.wgsl");
 
 impl WgpuRenderer {
+    /// Requires at least one `GpuCacheConfig`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `configs` is empty.
     pub fn new(
         device: &wgpu::Device,
         configs: &[GpuCacheConfig],

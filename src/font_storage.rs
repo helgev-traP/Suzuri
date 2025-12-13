@@ -130,11 +130,17 @@ impl FontStorage {
                         },
                     )
                 })?;
-                let font = font_result.ok()?;
 
-                // insert and return a reference that borrows from the map
-                let r: &mut Arc<fontdue::Font> = entry.insert(Arc::new(font));
-                Some(Arc::clone(r))
+                match font_result {
+                    Ok(font) => {
+                        let r: &mut Arc<fontdue::Font> = entry.insert(Arc::new(font));
+                        Some(Arc::clone(r))
+                    }
+                    Err(e) => {
+                        log::error!("Failed to load font (id: {:?}): {}", id, e);
+                        None
+                    }
+                }
             }
         }
     }

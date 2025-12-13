@@ -5,6 +5,7 @@
 /// caller reuse the same builder for repeated layout work.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextData<T: Clone> {
+    /// The list of text elements to be processed.
     pub texts: Vec<TextElement<T>>,
 }
 
@@ -14,9 +15,13 @@ pub struct TextData<T: Clone> {
 /// belong to the same font while still respecting wrapping boundaries.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextElement<T> {
+    /// The ID of the font to be used for this text run.
     pub font_id: fontdb::ID,
+    /// The size of the font in pixels.
     pub font_size: f32,
+    /// The actual text content string.
     pub content: String,
+    /// Custom user data associated with this text run (e.g., color, style).
     pub user_data: T,
 }
 

@@ -30,7 +30,7 @@ Add the following to your `Cargo.toml`.
 
 ```toml
 [dependencies]
-suzuri = "0.1.0"
+suzuri = "0.2.0"
 ```
 
 To use wgpu features, enable the `wgpu` feature.
@@ -39,7 +39,7 @@ wgpu機能を使用する場合は、`wgpu` featureを有効にしてくださ�
 
 ```toml
 [dependencies]
-suzuri = { version = "0.1.0", features = ["wgpu"] }
+suzuri = { version = "0.2.0", features = ["wgpu"] }
 ```
 
 ## Usage / 使い方
@@ -160,15 +160,33 @@ Use `cpu_render` to get pixel data in a callback.
 
 ```rust
 use suzuri::renderer::CpuCacheConfig;
+use std::num::NonZeroUsize;
 
-// Initialize
-// font_system.cpu_init(...);
+// Cache configuration / キャッシュ設定
+let cache_configs = [
+    CpuCacheConfig {
+        block_size: NonZeroUsize::new(32 * 32).unwrap(), // For small glyphs
+        capacity: NonZeroUsize::new(1024).unwrap(),
+    },
+    CpuCacheConfig {
+        block_size: NonZeroUsize::new(128 * 128).unwrap(), // For large glyphs
+        capacity: NonZeroUsize::new(128).unwrap(),
+    },
+];
 
+// Initialize (one-time)
+font_system.cpu_init(&cache_configs);
+
+// Render to buffer
+let image_size = [800usize, 600usize];
 font_system.cpu_render(
     &layout,
-    image_size, // [usize; 2]
+    image_size,
     &mut |pos, alpha, user_data| {
-        // process pixel
+        // 'pos' is [x, y] in pixels
+        // 'alpha' is the glyph coverage (0-255)
+        // 'user_data' is the custom data (e.g., MyColor)
+        // Process pixel here
     }
 );
 ```

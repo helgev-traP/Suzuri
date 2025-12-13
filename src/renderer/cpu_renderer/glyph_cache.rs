@@ -203,6 +203,8 @@ pub struct CpuCacheItem<'a> {
 #[derive(Clone, Copy)]
 pub struct CpuCacheConfig {
     /// Size of the memory block for caching.
+    ///
+    /// This specifies the total number of bytes for the glyph bitmap (`width * height`).
     pub block_size: NonZeroUsize,
     /// Maximum number of blocks to cache.
     pub capacity: NonZeroUsize,

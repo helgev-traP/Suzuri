@@ -100,12 +100,16 @@ fn render_glyph_into_bitmap<T>(
 /// Pixels are stored in row-major order with the origin at the top-left.
 /// Each pixel is a single byte where `0` is background and `255` is white.
 pub struct Bitmap {
+    /// The width of the bitmap in pixels.
     pub width: usize,
+    /// The height of the bitmap in pixels.
     pub height: usize,
+    /// The raw pixel data (row-major).
     pub pixels: Vec<u8>,
 }
 
 impl Bitmap {
+    /// Creates a new, zeroed-out bitmap of the specified dimensions.
     pub fn new(width: usize, height: usize) -> Self {
         let len = width.saturating_mul(height);
         Self {

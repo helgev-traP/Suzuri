@@ -1,4 +1,6 @@
+/// CPU software renderer.
 pub mod cpu_renderer;
+/// Hardware-agnostic GPU renderer.
 pub mod gpu_renderer;
 
 pub use cpu_renderer::{CpuCacheConfig, CpuRenderer};
@@ -10,7 +12,9 @@ pub mod wgpu_renderer;
 pub use wgpu_renderer::{SimpleRenderPass, WgpuRenderPassController, WgpuRenderer};
 
 // debug uses
+/// CPU-based debugging renderer.
 #[cfg(all(debug_assertions, feature = "wgpu"))]
 pub mod cpu_debug_renderer;
+/// Simple bitmap debug renderer.
 #[cfg(debug_assertions)]
 pub mod debug_renderer;

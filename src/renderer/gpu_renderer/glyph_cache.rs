@@ -301,6 +301,8 @@ mod cache_state {
 #[derive(Clone)]
 pub struct GpuCacheConfig {
     /// Size of each tile in pixels.
+    ///
+    /// This specifies the length of one side of the square tile (width or height).
     pub tile_size: NonZeroUsize,
     /// Number of tiles along one axis of the texture.
     pub tiles_per_axis: NonZeroUsize,
@@ -308,6 +310,7 @@ pub struct GpuCacheConfig {
     pub texture_size: NonZeroUsize,
 }
 
+/// Manages a single texture atlas for caching glyphs.
 pub struct CacheAtlas {
     // square
     tile_size: usize,
@@ -387,6 +390,7 @@ pub struct GpuCacheItem {
 }
 
 impl GpuCacheItem {
+    /// Calculates the UV coordinates for the glyph in the texture atlas.
     pub const fn glyph_uv(&self) -> Box2D<f32, UnknownUnit> {
         let x_min = self.glyph_box.min.x;
         let x_max = self.glyph_box.max.x;
@@ -734,7 +738,9 @@ impl FallbackGpuCache {
 
 /// Manages the GPU glyph cache, using one of the available strategies.
 pub enum GpuCache {
+    /// Fixed strategy: only inserts into specific atlas based on size.
     Fixed(FixedGpuCache),
+    /// Fallback strategy: tries to insert into any suitable atlas, handling overflow better.
     Fallback(FallbackGpuCache),
 }
 
@@ -781,6 +787,7 @@ impl GpuCache {
         }
     }
 
+    /// Retrieves a protected entry from the cache without eviction.
     pub fn get_and_protect_entry(
         &mut self,
         glyph_id: &GlyphId,
@@ -792,6 +799,7 @@ impl GpuCache {
         }
     }
 
+    /// Pushes a new entry to the cache, potentially evicting unprotected entries.
     pub fn push_and_evicting_unprotected(
         &mut self,
         glyph_id: &GlyphId,

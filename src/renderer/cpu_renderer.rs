@@ -4,7 +4,64 @@ use crate::text::{GlyphPosition, TextLayout};
 mod glyph_cache;
 pub use glyph_cache::{CpuCache, CpuCacheConfig, CpuCacheItem};
 
-/// CPU-based renderer that rasterizes glyphs using a cache.
+/// CPU-based text renderer.
+///
+/// ## Overview
+///
+/// `CpuRenderer` rasterizes glyphs into a CPU-side cache and renders them into a
+/// provided pixel buffer (e.g., a `Vec<u8>`). It is useful for software rendering
+/// contexts, generating initial textures for other engines (like Unity), or debug visualizations.
+///
+/// It uses a Least Recently Used (LRU) cache policy to manage rasterized glyph bitmaps efficiently.
+///
+/// ## Integration
+///
+/// This component can be used in two ways:
+/// -   **Through [`crate::FontSystem`]**: Provides a high-level API where `FontSystem` manages the renderer instance.
+/// -   **Standalone**: You can instantiate and use this renderer directly. This offers more granular control over resource management and rendering.
+///
+/// ## Usage
+///
+/// ```rust,no_run
+/// use suzuri::{
+///     FontSystem, fontdb,
+///     renderer::CpuCacheConfig,
+///     text::{TextData, TextElement, TextLayoutConfig}
+/// };
+/// use std::num::NonZeroUsize;
+///
+/// let font_system = FontSystem::new();
+/// font_system.load_system_fonts();
+///
+/// // 1. Initialize Renderer
+/// let cache_configs = [
+///     CpuCacheConfig {
+///         block_size: NonZeroUsize::new(32 * 32).unwrap(), // width * height
+///         capacity: NonZeroUsize::new(1024).unwrap(),
+///     },
+/// ];
+/// font_system.cpu_init(&cache_configs);
+///
+/// // 2. Layout Text
+/// let mut data = TextData::<()>::new();
+/// // ... (append text elements) ...
+/// let layout = font_system.layout_text(&data, &TextLayoutConfig::default());
+///
+/// // 3. Render
+/// let width = 640;
+/// let height = 480;
+/// let mut screen_buffer = vec![0u8; width * height];
+///
+/// font_system.cpu_render(
+///     &layout,
+///     [width, height],
+///     &mut |[x, y], alpha, user_data| {
+///         let idx = y * width + x;
+///         // Simple alpha blending
+///         screen_buffer[idx] = screen_buffer[idx].saturating_add(alpha);
+///     }
+/// );
+/// ```
 pub struct CpuRenderer {
     cache: CpuCache,
 }

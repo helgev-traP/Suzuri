@@ -8,14 +8,23 @@ use crate::{glyph_id::GlyphId, text::TextData};
 /// caller can measure or place text inside arbitrary rectangles.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextLayoutConfig {
+    /// Maximum width of the layout box. If text exceeds this, it may wrap or overflow.
     pub max_width: Option<f32>,
+    /// Maximum height of the layout box.
     pub max_height: Option<f32>,
+    /// Horizontal alignment of the text within the layout box.
     pub horizontal_align: HorizontalAlign,
+    /// Vertical alignment of the text within the layout box.
     pub vertical_align: VerticalAlign,
+    /// Scaling factor for the line height.
     pub line_height_scale: f32,
+    /// Strategy for wrapping text.
     pub wrap_style: WrapStyle,
+    /// Whether to force a hard break when text exceeds width, even in the middle of a word (if word wrapping fails).
     pub wrap_hard_break: bool,
+    /// Characters that are considered word separators for wrapping.
     pub word_separators: HashSet<char, fxhash::FxBuildHasher>,
+    /// Characters that trigger a hard line break.
     pub linebreak_char: HashSet<char, fxhash::FxBuildHasher>,
 }
 
@@ -39,44 +48,59 @@ impl Default for TextLayoutConfig {
 /// Horizontal justification applied after each line is assembled.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum HorizontalAlign {
+    /// Align text to the left.
     #[default]
     Left,
+    /// Center text horizontally.
     Center,
+    /// Align text to the right.
     Right,
 }
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 /// Vertical alignment strategy for the entire block of text.
 pub enum VerticalAlign {
+    /// Align text to the top.
     #[default]
     Top,
+    /// Center text vertically.
     Middle,
+    /// Align text to the bottom.
     Bottom,
 }
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 /// Wrapping rules that define where line breaks may occur.
 pub enum WrapStyle {
+    /// Wrap text at word boundaries.
     #[default]
     WordWrap,
+    /// Wrap text at any character.
     CharWrap,
+    /// Do not wrap text.
     NoWrap,
 }
 
 /// Final layout output produced by [`TextData::layout`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextLayout<T> {
+    /// The configuration used for this layout.
     pub config: TextLayoutConfig,
+    /// The total height of the laid out text.
     pub total_height: f32,
+    /// The total width of the laid out text.
     pub total_width: f32,
+    /// The lines of text in the layout.
     pub lines: Vec<TextLayoutLine<T>>,
 }
 
 impl<T> TextLayout<T> {
+    /// Returns the number of lines in the layout.
     pub fn len_lines(&self) -> usize {
         self.lines.len()
     }
 
+    /// Returns the total number of glyphs in the layout (sum of glyphs in all lines).
     pub fn len_glyphs(&self) -> usize {
         self.lines.iter().map(|line| line.glyphs.len()).sum()
     }
@@ -85,10 +109,15 @@ impl<T> TextLayout<T> {
 /// A single row of positioned glyphs in the final layout.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextLayoutLine<T> {
+    /// The height of this line.
     pub line_height: f32,
+    /// The width of this line.
     pub line_width: f32,
+    /// The Y coordinate of the top of this line.
     pub top: f32,
+    /// The Y coordinate of the bottom of this line.
     pub bottom: f32,
+    /// The glyphs contained in this line.
     pub glyphs: Vec<GlyphPosition<T>>,
 }
 
@@ -98,9 +127,13 @@ pub struct TextLayoutLine<T> {
 /// can draw them directly without additional transformations.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GlyphPosition<T> {
+    /// The unique identifier for the glyph.
     pub glyph_id: GlyphId,
+    /// The absolute X coordinate of the glyph.
     pub x: f32,
+    /// The absolute Y coordinate of the glyph.
     pub y: f32,
+    /// Custom user data associated with this glyph.
     pub user_data: T,
 }
 // place holder for eq and hash

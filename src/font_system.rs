@@ -366,6 +366,10 @@ impl FontSystem {
         }
     }
 
+    /// Renders text using the WGPU renderer with a custom render pass controller.
+    ///
+    /// This allows for more flexible rendering scenarios, such as custom render passes or
+    /// integration with other rendering pipelines.
     pub fn wgpu_render_to<T: Into<[f32; 4]> + Copy, E>(
         &self,
         text_layout: &TextLayout<T>,
