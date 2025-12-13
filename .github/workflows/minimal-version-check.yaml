@@ -1,0 +1,30 @@
+name: Minimal Versions
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check-minver:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nightly Rust
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-hack
+        uses: taiki-e/install-action@cargo-hack
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Update to minimal versions
+        run: cargo update -Z direct-minimal-versions
+
+      - name: Check with minimal versions
+        run: cargo hack check --rust-version --workspace --all-features --ignore-private --clean-per-run --remove-dev-deps
