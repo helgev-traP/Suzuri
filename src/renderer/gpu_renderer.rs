@@ -73,14 +73,45 @@ impl GpuRenderer {
     }
 
     /// Renders the layout, producing atlas updates and draw calls via callbacks.
+    ///
+    /// This method is for infallible callbacks. Use `try_render` for fallible callbacks.
     pub fn render<T: Clone + Copy>(
         &mut self,
         layout: &TextLayout<T>,
         font_storage: &mut FontStorage,
-        update_atlas: &mut impl FnMut(&[AtlasUpdate]),
-        draw_instances: &mut impl FnMut(&[GlyphInstance<T>]),
-        draw_standalone: &mut impl FnMut(&StandaloneGlyph<T>),
+        mut update_atlas: impl FnMut(&[AtlasUpdate]),
+        mut draw_instances: impl FnMut(&[GlyphInstance<T>]),
+        mut draw_standalone: impl FnMut(&StandaloneGlyph<T>),
     ) {
+        let _: Result<(), ()> = self.try_render(
+            layout,
+            font_storage,
+            &mut |u| {
+                update_atlas(u);
+                Ok(())
+            },
+            &mut |i| {
+                draw_instances(i);
+                Ok(())
+            },
+            &mut |s| {
+                draw_standalone(s);
+                Ok(())
+            },
+        );
+    }
+
+    /// Renders the layout, producing atlas updates and draw calls via callbacks.
+    ///
+    /// This method allows callbacks to return errors, which will be propagated.
+    pub fn try_render<T: Clone + Copy, E>(
+        &mut self,
+        layout: &TextLayout<T>,
+        font_storage: &mut FontStorage,
+        update_atlas: &mut impl FnMut(&[AtlasUpdate]) -> Result<(), E>,
+        draw_instances: &mut impl FnMut(&[GlyphInstance<T>]) -> Result<(), E>,
+        draw_standalone: &mut impl FnMut(&StandaloneGlyph<T>) -> Result<(), E>,
+    ) -> Result<(), E> {
         let mut update_atlas_list: Vec<AtlasUpdate> = Vec::new();
         let mut instance_list: Vec<GlyphInstance<T>> = Vec::new();
 
@@ -109,13 +140,13 @@ impl GpuRenderer {
                     None => {
                         // upload all new glyph data to atlas
                         if !update_atlas_list.is_empty() {
-                            update_atlas(&update_atlas_list);
+                            update_atlas(&update_atlas_list)?;
                             update_atlas_list.clear();
                         }
 
                         // draw call
                         if !instance_list.is_empty() {
-                            draw_instances(&instance_list);
+                            draw_instances(&instance_list)?;
                             instance_list.clear();
                         }
 
@@ -140,7 +171,7 @@ impl GpuRenderer {
                                 user_data: *user_data,
                             };
 
-                            draw_standalone(&isolate);
+                            draw_standalone(&isolate)?;
 
                             continue 'glyph_loop;
                         };
@@ -191,11 +222,13 @@ impl GpuRenderer {
         }
 
         if !update_atlas_list.is_empty() {
-            update_atlas(&update_atlas_list);
+            update_atlas(&update_atlas_list)?;
         }
 
         if !instance_list.is_empty() {
-            draw_instances(&instance_list);
+            draw_instances(&instance_list)?;
         }
+
+        Ok(())
     }
 }

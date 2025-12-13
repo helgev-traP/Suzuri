@@ -7,7 +7,7 @@ pub use gpu_renderer::{AtlasUpdate, GlyphInstance, GpuCacheConfig, GpuRenderer, 
 #[cfg(feature = "wgpu")]
 pub mod wgpu_renderer;
 #[cfg(feature = "wgpu")]
-pub use wgpu_renderer::{WgpuRenderPassController, WgpuRenderer};
+pub use wgpu_renderer::{SimpleRenderPass, WgpuRenderPassController, WgpuRenderer};
 
 // debug uses
 #[cfg(all(debug_assertions, feature = "wgpu"))]

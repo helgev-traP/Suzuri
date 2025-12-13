@@ -405,36 +405,107 @@ impl WgpuRenderer {
 /// `RenderPass` creation or a deferred command recording mechanism.
 /// It primarily exists to break the borrow checker deadlock where `encoder` (mutable)
 /// and `texture_view` (immutable) might be tied together inconveniently.
-pub trait WgpuRenderPassController {
+pub trait WgpuRenderPassController<E = ()> {
     /// Returns the mutable command encoder to record copy commands.
-    fn encoder(&mut self) -> &mut wgpu::CommandEncoder;
+    fn encoder(&mut self) -> Result<&mut wgpu::CommandEncoder, E>;
 
     /// Creates a new `RenderPass`.
     /// Note: The lifetime is tied to the controller to enforce correct usage scope.
-    fn create_pass(&mut self) -> wgpu::RenderPass<'_>;
+    fn create_pass(&mut self) -> Result<wgpu::RenderPass<'_>, E>;
 
     /// Returns the target texture format for pipeline selection.
-    fn format(&self) -> wgpu::TextureFormat;
+    fn format(&self) -> Result<wgpu::TextureFormat, E>;
 
     /// Returns the target screen size in pixels.
-    fn target_size(&self) -> [f32; 2];
+    fn target_size(&self) -> Result<[f32; 2], E>;
 }
 
-impl<T: WgpuRenderPassController + ?Sized> WgpuRenderPassController for &mut T {
-    fn encoder(&mut self) -> &mut wgpu::CommandEncoder {
+impl<T: WgpuRenderPassController<E> + ?Sized, E> WgpuRenderPassController<E> for &mut T {
+    fn encoder(&mut self) -> Result<&mut wgpu::CommandEncoder, E> {
         (**self).encoder()
     }
 
-    fn create_pass(&mut self) -> wgpu::RenderPass<'_> {
+    fn create_pass(&mut self) -> Result<wgpu::RenderPass<'_>, E> {
         (**self).create_pass()
     }
 
-    fn format(&self) -> wgpu::TextureFormat {
+    fn format(&self) -> Result<wgpu::TextureFormat, E> {
         (**self).format()
     }
 
-    fn target_size(&self) -> [f32; 2] {
+    fn target_size(&self) -> Result<[f32; 2], E> {
         (**self).target_size()
+    }
+}
+
+/// A simple implementation of `WgpuRenderPassController` that renders to a given view.
+///
+/// It clears the screen on the first draw call and loads on subsequent calls.
+/// This matches the typical behavior for rendering text overlay.
+pub struct SimpleRenderPass<'a> {
+    encoder: &'a mut wgpu::CommandEncoder,
+    view: &'a wgpu::TextureView,
+    first_call: bool,
+    clear_color: wgpu::Color,
+}
+
+impl<'a> SimpleRenderPass<'a> {
+    /// Creates a new `SimpleRenderPass`.
+    ///
+    /// By default, it clears to Black (0,0,0,1).
+    pub fn new(encoder: &'a mut wgpu::CommandEncoder, view: &'a wgpu::TextureView) -> Self {
+        Self {
+            encoder,
+            view,
+            first_call: true,
+            clear_color: wgpu::Color::BLACK,
+        }
+    }
+
+    /// Sets the clear color used on the first pass.
+    pub fn with_clear_color(mut self, color: wgpu::Color) -> Self {
+        self.clear_color = color;
+        self
+    }
+}
+
+impl<'a> WgpuRenderPassController<()> for SimpleRenderPass<'a> {
+    fn encoder(&mut self) -> Result<&mut wgpu::CommandEncoder, ()> {
+        Ok(self.encoder)
+    }
+
+    fn create_pass(&mut self) -> Result<wgpu::RenderPass<'_>, ()> {
+        let load = if self.first_call {
+            self.first_call = false;
+            wgpu::LoadOp::Clear(self.clear_color)
+        } else {
+            wgpu::LoadOp::Load
+        };
+
+        Ok(self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("WgpuRenderer Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: self.view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load,
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        }))
+    }
+
+    fn format(&self) -> Result<wgpu::TextureFormat, ()> {
+        Ok(self.view.texture().format())
+    }
+
+    fn target_size(&self) -> Result<[f32; 2], ()> {
+        let size = self.view.texture().size();
+        Ok([size.width as f32, size.height as f32])
     }
 }
 
@@ -447,78 +518,29 @@ impl WgpuRenderer {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
     ) {
-        struct SimpleWgpuRenderContext<'a> {
-            encoder: &'a mut wgpu::CommandEncoder,
-            view: &'a wgpu::TextureView,
-            first_call: bool,
-        }
+        let mut ctx = SimpleRenderPass::new(encoder, view);
 
-        impl<'a> WgpuRenderPassController for SimpleWgpuRenderContext<'a> {
-            fn encoder(&mut self) -> &mut wgpu::CommandEncoder {
-                self.encoder
-            }
-
-            fn create_pass(&mut self) -> wgpu::RenderPass<'_> {
-                let load = if self.first_call {
-                    self.first_call = false;
-                    wgpu::LoadOp::Clear(wgpu::Color::BLACK)
-                } else {
-                    wgpu::LoadOp::Load
-                };
-
-                self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("WgpuRenderer Render Pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: self.view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                })
-            }
-
-            fn format(&self) -> wgpu::TextureFormat {
-                self.view.texture().format()
-            }
-
-            fn target_size(&self) -> [f32; 2] {
-                let size = self.view.texture().size();
-                [size.width as f32, size.height as f32]
-            }
-        }
-
-        let mut ctx = SimpleWgpuRenderContext {
-            encoder,
-            view,
-            first_call: true,
-        };
-
-        self.render_to(text_layout, font_storage, device, &mut ctx);
+        self.render_to(text_layout, font_storage, device, &mut ctx)
+            .expect("`SimpleRenderPass` never fails.")
     }
 
     /// Renders the layout using a custom render pass controller.
     ///
     /// This method allows for more flexible rendering scenarios where the render pass
     /// creation or management is handled externally via the `WgpuRenderPassController` trait.
-    pub fn render_to<T: Into<[f32; 4]> + Copy>(
+    pub fn render_to<T: Into<[f32; 4]> + Copy, E>(
         &mut self,
         text_layout: &TextLayout<T>,
         font_storage: &mut FontStorage,
         device: &wgpu::Device,
-        controller: &mut impl WgpuRenderPassController,
-    ) {
+        controller: &mut impl WgpuRenderPassController<E>,
+    ) -> Result<(), E> {
         // Reset offset at the beginning of the frame
         let current_offset = std::cell::Cell::new(0);
 
         // Update globals
         let globals = Globals {
-            screen_size: controller.target_size(),
+            screen_size: controller.target_size()?,
             _padding: [0.0; 2],
         };
         let globals_staging_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -526,7 +548,7 @@ impl WgpuRenderer {
             contents: bytemuck::bytes_of(&globals),
             usage: wgpu::BufferUsages::COPY_SRC,
         });
-        controller.encoder().copy_buffer_to_buffer(
+        controller.encoder()?.copy_buffer_to_buffer(
             &globals_staging_buffer,
             0,
             &self.resources.globals_buffer,
@@ -538,33 +560,36 @@ impl WgpuRenderer {
         let ctx_cell = std::cell::RefCell::new(controller);
 
         // Delegate to GpuRenderer to calculate layout and cache glyphs
-        self.gpu_renderer.render(
+        self.gpu_renderer.try_render(
             text_layout,
             font_storage,
             // Callback: Update Texture Atlas
-            &mut |updates: &[AtlasUpdate]| {
+            &mut |updates: &[AtlasUpdate]| -> Result<(), E> {
                 let mut ctx = ctx_cell.borrow_mut();
-                self.resources.update_atlas(device, ctx.encoder(), updates);
+                self.resources.update_atlas(device, ctx.encoder()?, updates);
+                Ok(())
             },
             // Callback: Draw standard glyphs (batched)
-            &mut |instances: &[GlyphInstance<T>]| {
+            &mut |instances: &[GlyphInstance<T>]| -> Result<(), E> {
                 self.resources.draw_instances(
                     device,
                     &mut *ctx_cell.borrow_mut(),
                     &current_offset,
                     instances,
-                );
+                )
             },
             // Callback: Draw standalone glyph (large)
-            &mut |standalone: &StandaloneGlyph<T>| {
+            &mut |standalone: &StandaloneGlyph<T>| -> Result<(), E> {
                 self.resources.draw_standalone(
                     device,
                     &mut *ctx_cell.borrow_mut(),
                     &current_offset,
                     standalone,
-                );
+                )
             },
-        );
+        )?;
+
+        Ok(())
     }
 }
 
@@ -868,15 +893,15 @@ impl WgpuResources {
         }
     }
 
-    fn draw_instances<T: Into<[f32; 4]> + Copy>(
+    fn draw_instances<T: Into<[f32; 4]> + Copy, E>(
         &self,
         device: &wgpu::Device,
-        controller: &mut impl WgpuRenderPassController,
+        controller: &mut impl WgpuRenderPassController<E>,
         current_offset: &std::cell::Cell<u64>,
         instances: &[GlyphInstance<T>],
-    ) {
+    ) -> Result<(), E> {
         if instances.is_empty() {
-            return;
+            return Ok(());
         }
 
         let mut instance_buffer = self.instance_buffer.borrow_mut();
@@ -915,7 +940,7 @@ impl WgpuResources {
             usage: wgpu::BufferUsages::COPY_SRC,
         });
 
-        controller.encoder().copy_buffer_to_buffer(
+        controller.encoder()?.copy_buffer_to_buffer(
             &staging_buffer,
             0,
             &instance_buffer,
@@ -923,8 +948,8 @@ impl WgpuResources {
             bytes.len() as u64,
         );
 
-        let format = controller.format();
-        let mut rpass = controller.create_pass();
+        let format = controller.format()?;
+        let mut rpass = controller.create_pass()?;
 
         // Use cached pipeline or create new one based on format
         let pipeline = self.get_pipeline(device, format);
@@ -937,15 +962,16 @@ impl WgpuResources {
         rpass.draw(0..4, 0..instance_data.len() as u32);
 
         current_offset.set(offset + bytes.len() as u64);
+        Ok(())
     }
 
-    fn draw_standalone<T: Into<[f32; 4]> + Copy>(
+    fn draw_standalone<T: Into<[f32; 4]> + Copy, E>(
         &self,
         device: &wgpu::Device,
-        controller: &mut impl WgpuRenderPassController,
+        controller: &mut impl WgpuRenderPassController<E>,
         current_offset: &std::cell::Cell<u64>,
         standalone: &StandaloneGlyph<T>,
-    ) {
+    ) -> Result<(), E> {
         let needed_width = standalone.width as u32;
         let needed_height = standalone.height as u32;
 
@@ -968,7 +994,7 @@ impl WgpuResources {
             usage: wgpu::BufferUsages::COPY_SRC,
         });
 
-        controller.encoder().copy_buffer_to_texture(
+        controller.encoder()?.copy_buffer_to_texture(
             wgpu::TexelCopyBufferInfo {
                 buffer: &staging_buffer,
                 layout: wgpu::TexelCopyBufferLayout {
@@ -1024,7 +1050,7 @@ impl WgpuResources {
             usage: wgpu::BufferUsages::COPY_SRC,
         });
 
-        controller.encoder().copy_buffer_to_buffer(
+        controller.encoder()?.copy_buffer_to_buffer(
             &staging_buffer,
             0,
             &instance_buffer,
@@ -1032,8 +1058,8 @@ impl WgpuResources {
             bytes.len() as u64,
         );
 
-        let format = controller.format();
-        let mut rpass = controller.create_pass();
+        let format = controller.format()?;
+        let mut rpass = controller.create_pass()?;
 
         let pipeline = self.get_standalone_pipeline(device, format);
         rpass.set_pipeline(&pipeline);
@@ -1045,5 +1071,6 @@ impl WgpuResources {
         rpass.draw(0..4, 0..1);
 
         current_offset.set(offset + bytes.len() as u64);
+        Ok(())
     }
 }

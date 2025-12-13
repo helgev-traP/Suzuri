@@ -244,12 +244,13 @@ impl FontSystem {
     /// Renders text using the generic GPU renderer.
     ///
     /// This requires providing callbacks to handle atlas updates and drawing.
+    /// This method is for infallible callbacks. Use `try_gpu_render` for fallible callbacks.
     pub fn gpu_render<T: Clone + Copy>(
         &self,
         layout: &TextLayout<T>,
-        update_atlas: &mut impl FnMut(&[AtlasUpdate]),
-        draw_instances: &mut impl FnMut(&[GlyphInstance<T>]),
-        draw_standalone: &mut impl FnMut(&StandaloneGlyph<T>),
+        update_atlas: impl FnMut(&[AtlasUpdate]),
+        draw_instances: impl FnMut(&[GlyphInstance<T>]),
+        draw_standalone: impl FnMut(&StandaloneGlyph<T>),
     ) {
         if let Some(renderer) = &mut *self.gpu_renderer.lock() {
             renderer.render(
@@ -258,9 +259,34 @@ impl FontSystem {
                 update_atlas,
                 draw_instances,
                 draw_standalone,
-            );
+            )
         } else {
             log::warn!("Render called before gpu renderer initialized.");
+        }
+    }
+
+    /// Renders text using the generic GPU renderer.
+    ///
+    /// This requires providing callbacks to handle atlas updates and drawing.
+    /// This method allows callbacks to return errors, which will be propagated.
+    pub fn try_gpu_render<T: Clone + Copy, E>(
+        &self,
+        layout: &TextLayout<T>,
+        update_atlas: &mut impl FnMut(&[AtlasUpdate]) -> Result<(), E>,
+        draw_instances: &mut impl FnMut(&[GlyphInstance<T>]) -> Result<(), E>,
+        draw_standalone: &mut impl FnMut(&StandaloneGlyph<T>) -> Result<(), E>,
+    ) -> Result<(), E> {
+        if let Some(renderer) = &mut *self.gpu_renderer.lock() {
+            renderer.try_render(
+                layout,
+                &mut self.font_storage.lock(),
+                update_atlas,
+                draw_instances,
+                draw_standalone,
+            )
+        } else {
+            log::warn!("Render called before gpu renderer initialized.");
+            Ok(())
         }
     }
 }
@@ -314,21 +340,24 @@ impl FontSystem {
         }
     }
 
-    pub fn wgpu_render_to<T: Into<[f32; 4]> + Copy>(
+    pub fn wgpu_render_to<T: Into<[f32; 4]> + Copy, E>(
         &self,
         text_layout: &TextLayout<T>,
         device: &wgpu::Device,
-        controller: &mut impl WgpuRenderPassController,
-    ) {
+        controller: &mut impl WgpuRenderPassController<E>,
+    ) -> Result<(), E> {
         if let Some(renderer) = &mut *self.wgpu_renderer.lock() {
             renderer.render_to(
                 text_layout,
                 &mut self.font_storage.lock(),
                 device,
                 controller,
-            );
+            )?;
+
+            Ok(())
         } else {
             log::warn!("Render called before wgpu renderer initialized.");
+            Ok(())
         }
     }
 }
