@@ -194,6 +194,13 @@ impl FontSystem {
         *self.cpu_renderer.lock() = Some(Box::new(CpuRenderer::new(configs)));
     }
 
+    /// Initializes the CPU renderer with the given cache configuration if it is not already initialized.
+    pub fn cpu_ensure_init(&self, configs: &[CpuCacheConfig]) {
+        if self.cpu_renderer.lock().is_none() {
+            self.cpu_init(configs);
+        }
+    }
+
     /// Clears the CPU renderer's cache.
     pub fn cpu_cache_clear(&self) {
         if let Some(renderer) = &mut *self.cpu_renderer.lock() {
@@ -230,6 +237,13 @@ impl FontSystem {
         *self.gpu_renderer.lock() = None;
 
         *self.gpu_renderer.lock() = Some(Box::new(GpuRenderer::new(configs)));
+    }
+
+    /// Initializes the generic GPU renderer with the given cache configuration if it is not already initialized.
+    pub fn gpu_ensure_init(&self, configs: &[GpuCacheConfig]) {
+        if self.gpu_renderer.lock().is_none() {
+            self.gpu_init(configs);
+        }
     }
 
     /// Clears the generic GPU renderer's cache.
@@ -308,6 +322,18 @@ impl FontSystem {
         *self.wgpu_renderer.lock() = None;
 
         *self.wgpu_renderer.lock() = Some(Box::new(WgpuRenderer::new(device, configs, formats)));
+    }
+
+    /// Initializes the WGPU renderer with the given cache configuration if it is not already initialized.
+    pub fn wgpu_ensure_init(
+        &self,
+        device: &wgpu::Device,
+        configs: &[GpuCacheConfig],
+        formats: &[wgpu::TextureFormat],
+    ) {
+        if self.wgpu_renderer.lock().is_none() {
+            self.wgpu_init(device, configs, formats);
+        }
     }
 
     /// Clears the WGPU renderer's cache.
