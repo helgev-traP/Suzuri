@@ -18,6 +18,9 @@ jobs:
       - name: Install Nightly Rust
         uses: dtolnay/rust-toolchain@nightly
 
+      - name: Install MSRV Rust
+        uses: dtolnay/rust-toolchain@1.88
+
       - name: Install cargo-hack
         uses: taiki-e/install-action@cargo-hack
 
