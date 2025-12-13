@@ -29,34 +29,38 @@ impl Default for TextLayoutConfig {
             line_height_scale: 1.0,
             wrap_style: WrapStyle::NoWrap,
             wrap_hard_break: false,
-            word_separators: HashSet::default(),
-            linebreak_char: HashSet::default(),
+            // TODO: implement tab handling.
+            word_separators: [' ', '\t', '\n', '\r'].iter().cloned().collect(),
+            linebreak_char: ['\n', '\r'].iter().cloned().collect(),
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Horizontal justification applied after each line is assembled.
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum HorizontalAlign {
+    #[default]
     Left,
     Center,
     Right,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 /// Vertical alignment strategy for the entire block of text.
 pub enum VerticalAlign {
+    #[default]
     Top,
     Middle,
     Bottom,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 /// Wrapping rules that define where line breaks may occur.
 pub enum WrapStyle {
-    NoWrap,
+    #[default]
     WordWrap,
     CharWrap,
+    NoWrap,
 }
 
 /// Final layout output produced by [`TextData::layout`].
