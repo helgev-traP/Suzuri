@@ -30,35 +30,40 @@ pub use glyph_cache::{CpuCache, CpuCacheConfig, CpuCacheItem};
 /// };
 /// use std::num::NonZeroUsize;
 ///
+/// // 1. Initialize FontSystem & Load Fonts
 /// let font_system = FontSystem::new();
 /// font_system.load_system_fonts();
 ///
-/// // 1. Initialize Renderer
+/// // 2. Initialize CPU Renderer
 /// let cache_configs = [
 ///     CpuCacheConfig {
-///         block_size: NonZeroUsize::new(32 * 32).unwrap(), // width * height
+///         block_size: NonZeroUsize::new(32 * 32).unwrap(),
 ///         capacity: NonZeroUsize::new(1024).unwrap(),
 ///     },
 /// ];
 /// font_system.cpu_init(&cache_configs);
 ///
-/// // 2. Layout Text
-/// let mut data = TextData::<()>::new();
-/// // ... (append text elements) ...
+/// // 3. Prepare Text Data (UserData = u8 brightness)
+/// let mut data = TextData::<u8>::new();
+/// // ... append text elements ...
+/// // data.append(TextElement { ... });
+///
+/// // 4. Layout
 /// let layout = font_system.layout_text(&data, &TextLayoutConfig::default());
 ///
-/// // 3. Render
+/// // 5. Render
 /// let width = 640;
 /// let height = 480;
-/// let mut screen_buffer = vec![0u8; width * height];
+/// let mut buffer = vec![0u8; width * height];
 ///
 /// font_system.cpu_render(
 ///     &layout,
 ///     [width, height],
-///     &mut |[x, y], alpha, user_data| {
-///         let idx = y * width + x;
-///         // Simple alpha blending
-///         screen_buffer[idx] = screen_buffer[idx].saturating_add(alpha);
+///     &mut |pos, alpha, color| {
+///         let idx = pos[1] * width + pos[0];
+///         // Alpha blending with user_data (color)
+///         let val = (alpha as u16 * *color as u16 / 255) as u8;
+///         buffer[idx] = buffer[idx].saturating_add(val);
 ///     }
 /// );
 /// ```

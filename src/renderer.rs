@@ -14,7 +14,9 @@ pub use wgpu_renderer::{SimpleRenderPass, WgpuRenderPassController, WgpuRenderer
 // debug uses
 /// CPU-based debugging renderer.
 #[cfg(all(debug_assertions, feature = "wgpu"))]
+#[doc(hidden)]
 pub mod cpu_debug_renderer;
 /// Simple bitmap debug renderer.
 #[cfg(debug_assertions)]
+#[doc(hidden)]
 pub mod debug_renderer;

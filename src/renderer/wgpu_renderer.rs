@@ -154,36 +154,15 @@ struct Globals {
 /// To avoid runtime hitches, you can pre-warm the cache by supplying expected formats
 /// during initialization:
 /// ```rust,no_run
-/// # use suzuri::renderer::{WgpuRenderer, GpuCacheConfig};
+/// # use suzuri::{FontSystem, renderer::GpuCacheConfig};
 /// # use std::num::NonZeroUsize;
 /// # let (device, queue): (wgpu::Device, wgpu::Queue) = todo!();
 /// # let cache_configs = [];
-/// let renderer = WgpuRenderer::new(
+/// let font_system = FontSystem::new();
+/// font_system.wgpu_init(
 ///     &device,
 ///     &cache_configs,
 ///     &[wgpu::TextureFormat::Bgra8Unorm, wgpu::TextureFormat::Rgba8Unorm] // Pre-compile these
-/// );
-/// ```
-///
-/// # Usage
-/// 1. Initialize with `WgpuRenderer::new`.
-/// 2. Prepare text layout using `FontSystem`.
-/// 3. Call `render` inside your generic render pass.
-///
-/// ```rust,no_run
-/// # use suzuri::{renderer::WgpuRenderer, text::TextLayout, font_storage::FontStorage};
-/// # let mut renderer: WgpuRenderer = todo!();
-/// # let (device, queue): (wgpu::Device, wgpu::Queue) = todo!();
-/// # let mut encoder: wgpu::CommandEncoder = todo!();
-/// # let texture_view: wgpu::TextureView = todo!();
-/// # let layout: TextLayout<[f32; 4]> = todo!();
-/// # let mut font_storage: FontStorage = todo!();
-/// renderer.render(
-///     &layout,
-///     &mut font_storage,
-///     &device,
-///     &mut encoder,
-///     &texture_view,
 /// );
 /// ```
 ///

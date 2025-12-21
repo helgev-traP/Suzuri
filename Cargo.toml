@@ -13,6 +13,10 @@ categories = ["gui", "graphics", "text-processing"]
 
 include = ["src/**", "Cargo.toml", "README.md", "LICENSE*"]
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dependencies]
 euclid = "^0.22.0"
 fontdb = "^0.23.0"

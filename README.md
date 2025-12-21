@@ -1,54 +1,64 @@
 # Suzuri
 
-Suzuri is a text rendering library written in Rust. It supports text rendering on both CPU and GPU (wgpu), providing font management, text layout, and rendering capabilities.
+Suzuri is a text rendering library written in Rust.
+Use this crate to layout and render text with consistent results.
 
-Suzuriは、Rust製のテキストレンダリングライブラリです。CPUおよびGPU (wgpu) でのテキスト描画をサポートしており、フォント管理、テキストレイアウト、レンダリング機能を提供します。
+This crate prioritizes consistency and reproducibility within a two-pass layout data flow.
+It ensures that layout results remain stable even when constraints change, provided there is enough
+whitespace (e.g., preventing unstable line breaks when layout width is reduced).
 
-## Features / 特徴
+## Features
 
-- **Font Management**: Loads system fonts and manages custom fonts. Internally uses [fontdb](https://github.com/RazrFalcon/fontdb).
-- **Text Layout**: Calculates text placement including wrapping, alignment, line spacing, etc.
-- **Consistent Layout**: Ensures layout consistency and reproducibility within a two-pass layout data flow. Unlike existing libraries such as `cosmic-text` or `glyphon`, it prevents unstable behavior where reducing layout width alters line breaks even when sufficient whitespace remains.
-- **Rendering**:
-  - **CPU Rendering**: Drawing to image buffers.
-  - **GPU Rendering**: High-speed drawing using [wgpu](https://wgpu.rs/).
+*   **Flexible Backend**: Supports both CPU-based rendering and GPU acceleration (via [wgpu](https://wgpu.rs/)).
+*   **Robust Layout**: Handles text wrapping, alignment, and multi-font shaping with predictable results.
+*   **Font Management**: Easy loading of system fonts and custom font files via [fontdb](https://github.com/RazrFalcon/fontdb).
+*   **Thread Safety**: Designed with internal locking for safe concurrent use.
 
----
+## Overview
 
-- **フォント管理**: システムフォントの読み込みや、カスタムフォントの管理を行います。内部で [fontdb](https://github.com/RazrFalcon/fontdb) を使用しています。
-- **テキストレイアウト**: 折り返し、整列、行間設定などを含むテキスト配置計算を行います。
-- **レイアウトの整合性**: `cosmic-text` や `glyphon` などの既存ライブラリとは異なり、2パスレイアウトデータフロー内での整合性と再現性を確保しています。十分な余白がある状態でレイアウト幅を縮小しても、改行位置などの結果が不意に変わることのない安定した挙動を提供します。
-- **レンダリング**:
-  - **CPUレンダリング**: 画像バッファへの描画。
-  - **GPUレンダリング**: [wgpu](https://wgpu.rs/) を使用した高速な描画。
+The library is composed of the following main functionalities:
 
-## Installation / インストール
+*   **[`font_storage::FontStorage`]**: Manages font loading and caching. It handles system fonts and custom font data.
+*   **Text Representation**: Defined by [`text::TextData`] and [`text::TextElement`]. These structures hold the content and styling information (font, size, color, etc.) for text.
+*   **[`text::TextLayout`]**: The engine that calculates glyph positions, handling wrapping, alignment, and other layout properties based on the configuration.
+*   **Renderers**:
+    *   **[`renderer::CpuRenderer`]**: Renders text into a pixel buffer on the CPU.
+    *   **[`renderer::GpuRenderer`]**: A graphics-API-independent text renderer. It manages texture atlases and glyph quads, allowing implementation on any graphics backend (e.g., OpenGL, Vulkan, DirectX).
+    *   **[`renderer::WgpuRenderer`]**: A concrete implementation built on top of `GpuRenderer` using the [wgpu](https://wgpu.rs/) graphics API.
 
-Add the following to your `Cargo.toml`.
+The [`FontSystem`] acts as the central hub, coordinating these components to provide a unified API.
 
-`Cargo.toml` に以下を追加してください。
+## How to Read the Documentation
+
+To get started with Suzuri, we recommend reading the documentation in the following order:
+
+1.  **[`FontSystem`]**: The entry point of the library. Learn how to initialize the system.
+2.  **[`fontdb`]**: Understanding `fontdb` is essential for querying fonts (by family, weight, style) to obtain the Font ID needed for text elements.
+3.  **[`text::TextData`] & [`text::TextElement`]**: Learn how to create text content with styles and custom data.
+4.  **[`text::TextLayout`]**: Understand how the text is measured and arranged.
+5.  **Renderers**: Finally, explore the specific renderer you intend to use (e.g., in [`renderer`] module) for integration details.
+
+## Installation
+
+Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
 suzuri = "0.2.0"
 ```
 
-To use wgpu features, enable the `wgpu` feature.
-
-wgpu機能を使用する場合は、`wgpu` featureを有効にしてください。
+To use wgpu features, enable the `wgpu` feature:
 
 ```toml
 [dependencies]
 suzuri = { version = "0.2.0", features = ["wgpu"] }
 ```
 
-## Usage / 使い方
+## Usage
 
-### 1. Initialize FontSystem / FontSystemの初期化
+### 1. Initialize FontSystem
 
-`FontSystem` is the entry point for Suzuri. It handles font loading, layout, and renderer management.
-
-`FontSystem` は Suzuri のエントリーポイントです。フォントの読み込み、レイアウト、レンダラーの管理を一括して行います。
+[`FontSystem`] is the entry point for Suzuri. It handles font loading, layout, and renderer management.
 
 ```rust
 use suzuri::{FontSystem, fontdb::{self, Family, Query}};
@@ -56,7 +66,7 @@ use suzuri::{FontSystem, fontdb::{self, Family, Query}};
 let font_system = FontSystem::new();
 font_system.load_system_fonts();
 
-// Query a font / フォントの検索
+// Query a font
 let font_id = font_system
     .query(&Query {
         families: &[Family::Name("Arial"), Family::SansSerif],
@@ -64,29 +74,25 @@ let font_id = font_system
         stretch: fontdb::Stretch::Normal,
         style: fontdb::Style::Normal,
     })
-    .map(|(id, _)| id)
-    .expect("Font not found");
+    .map(|(id, _)| id);
+    // .expect("Font not found"); // Handle error appropriately
 ```
 
-For details on font queries, please refer to the [fontdb documentation](https://docs.rs/fontdb/latest/fontdb/struct.Query.html).
-
-フォントクエリの詳細については、[fontdbのドキュメント](https://docs.rs/fontdb/latest/fontdb/struct.Query.html)を参照してください。
-
-### 2. Create Text Data / テキストデータの作成
+### 2. Prepare Text Data
 
 Define the content and style of the text you want to render.
 
-描画したいテキストの内容とスタイルを定義します。
-
 ```rust
-use suzuri::text::{TextData, TextElement};
-
-// Color type is user-definable / 色の型はユーザー定義可能です
+# use suzuri::{FontSystem, fontdb};
+# use suzuri::text::{TextData, TextElement};
+# let font_system = FontSystem::new();
+# let font_id = None; 
+#
+// Color type is user-definable
 #[derive(Clone, Copy, Debug)]
 struct MyColor { r: f32, g: f32, b: f32, a: f32 }
 
 // For wgpu rendering, convert to [f32; 4] (Premultiplied Alpha)
-// wgpuレンダリングのために [f32; 4] (Premultiplied Alpha) へ変換します
 impl From<MyColor> for [f32; 4] {
     fn from(c: MyColor) -> Self {
         [c.r * c.a, c.g * c.a, c.b * c.a, c.a]
@@ -94,22 +100,25 @@ impl From<MyColor> for [f32; 4] {
 }
 
 let mut data = TextData::new();
-data.append(TextElement {
-    content: "Hello, Suzuri!".to_string(),
-    font_id,
-    font_size: 32.0,
-    user_data: MyColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
-});
+if let Some(id) = font_id {
+    data.append(TextElement {
+        content: "Hello, Suzuri!".to_string(),
+        font_id: id,
+        font_size: 32.0,
+        user_data: MyColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
+    });
+}
 ```
 
-### 3. Calculate Layout / レイアウトの計算
+### 3. Layout the Text
 
-Configure layout settings with `TextLayoutConfig` and calculate the placement.
-
-`TextLayoutConfig` でレイアウト設定を行い、配置を計算します。
+Configure layout settings with [`text::TextLayoutConfig`] and calculate the placement.
 
 ```rust
+# use suzuri::{FontSystem, text::TextData};
 use suzuri::text::{TextLayoutConfig, HorizontalAlign, VerticalAlign, WrapStyle};
+# let font_system = FontSystem::new();
+# let data = TextData::<u8>::new();
 
 let config = TextLayoutConfig {
     max_width: Some(800.0),
@@ -124,73 +133,18 @@ let config = TextLayoutConfig {
 let layout = font_system.layout_text(&data, &config);
 ```
 
-### 4. Rendering / レンダリング
+### 4. Rendering
 
-#### GPU Rendering (wgpu) / GPUレンダリング (wgpu)
+#### CPU Rendering
 
-Initialize the renderer and draw inside a render pass.
+For detailed usage, please refer to the [`renderer::CpuRenderer`] documentation.
 
-レンダラーを初期化し、レンダーパス内で描画します。
+#### GPU Rendering (wgpu)
 
-```rust
-use suzuri::renderer::GpuCacheConfig;
-use std::num::NonZeroUsize;
+To render using wgpu, initialize the renderer with the device and queue, then draw within a render pass.
 
-// Cache configuration / キャッシュ設定
-let cache_configs = vec![
-    GpuCacheConfig {
-        tile_size: NonZeroUsize::new(32).unwrap(),
-        tiles_per_axis: NonZeroUsize::new(16).unwrap(),
-        texture_size: NonZeroUsize::new(512).unwrap(),
-    },
-];
+For detailed usage, please refer to the [`renderer::WgpuRenderer`] documentation.
 
-// Initialize (one-time)
-font_system.wgpu_init(&device, &cache_configs, &[texture_format]);
-
-// Draw inside a render pass
-font_system.wgpu_render(&layout, &device, &mut encoder, &view);
-```
-
-#### CPU Rendering / CPUレンダリング
-
-Use `cpu_render` to get pixel data in a callback.
-
-`cpu_render` を使用して、コールバック内でピクセルデータを取得します。
-
-```rust
-use suzuri::renderer::CpuCacheConfig;
-use std::num::NonZeroUsize;
-
-// Cache configuration / キャッシュ設定
-let cache_configs = [
-    CpuCacheConfig {
-        block_size: NonZeroUsize::new(32 * 32).unwrap(), // For small glyphs
-        capacity: NonZeroUsize::new(1024).unwrap(),
-    },
-    CpuCacheConfig {
-        block_size: NonZeroUsize::new(128 * 128).unwrap(), // For large glyphs
-        capacity: NonZeroUsize::new(128).unwrap(),
-    },
-];
-
-// Initialize (one-time)
-font_system.cpu_init(&cache_configs);
-
-// Render to buffer
-let image_size = [800usize, 600usize];
-font_system.cpu_render(
-    &layout,
-    image_size,
-    &mut |pos, alpha, user_data| {
-        // 'pos' is [x, y] in pixels
-        // 'alpha' is the glyph coverage (0-255)
-        // 'user_data' is the custom data (e.g., MyColor)
-        // Process pixel here
-    }
-);
-```
-
-## License / ライセンス
+## License
 
 MIT OR Apache-2.0
