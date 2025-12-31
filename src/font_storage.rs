@@ -101,6 +101,13 @@ impl FontStorage {
     pub fn family_name<'a>(&'a self, family: &'a fontdb::Family<'_>) -> &'a str {
         self.font_db.family_name(family)
     }
+
+    pub fn with_face_data<F, R>(&self, id: fontdb::ID, f: F) -> Option<R>
+    where
+        F: FnOnce(&[u8], u32) -> R,
+    {
+        self.font_db.with_face_data(id, f)
+    }
 }
 
 /// Get `Font`

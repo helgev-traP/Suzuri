@@ -29,9 +29,7 @@ fn make_config(max_width: Option<f32>, max_height: Option<f32>) -> TextLayoutCon
         vertical_align: VerticalAlign::Top,
         line_height_scale: 1.0,
         wrap_style: WrapStyle::WordWrap,
-        wrap_hard_break: true,
-        word_separators,
-        linebreak_char,
+        tab_size_in_spaces: 4,
     }
 }
 

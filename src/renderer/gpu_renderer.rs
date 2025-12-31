@@ -178,6 +178,7 @@ impl GpuRenderer {
             'glyph_loop: for glyph in &line.glyphs {
                 let GlyphPosition::<T> {
                     glyph_id,
+                    glyph_metrics,
                     x,
                     y,
                     user_data,
