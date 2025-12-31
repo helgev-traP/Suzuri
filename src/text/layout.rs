@@ -227,10 +227,11 @@ impl<T: Clone> TextData<T> {
 
             last_line_metrics = Some(line_metric);
 
-            for ch in text.content.chars() {
+            // Helper closure to create a glyph fragment.
+            let create_fragment = |ch: char| {
                 let glyph_idx = font.lookup_glyph_index(ch);
                 let metrics = font.metrics_indexed(glyph_idx, text.font_size);
-                let fragment = layout_utl::GlyphFragment {
+                layout_utl::GlyphFragment {
                     ch,
                     glyph_idx,
                     metrics,
@@ -239,79 +240,82 @@ impl<T: Clone> TextData<T> {
                     font_size: text.font_size,
                     font: Arc::clone(&font),
                     user_data: text.user_data.clone(),
-                };
+                }
+            };
 
-                if linebreak_char.contains(&ch) {
-                    // Newline characters always terminate the current line.
-                    if let Some(word) = word_buf.take() {
-                        Self::append_fragments_with_rules(
-                            &mut line_buf,
-                            &mut lines,
-                            &word,
-                            true,
-                            max_width,
-                            wrap_style,
-                            wrap_hard_break,
-                            font_storage,
-                        );
+            for ch in text.content.chars() {
+                match layout_utl::classify_char(ch, word_separators, linebreak_char) {
+                    layout_utl::CharBehavior::LineBreak => {
+                        // Terminate the current line.
+                        if let Some(word) = word_buf.take() {
+                            Self::append_fragments_with_rules(
+                                &mut line_buf,
+                                &mut lines,
+                                &word,
+                                true,
+                                max_width,
+                                wrap_style,
+                                wrap_hard_break,
+                                font_storage,
+                            );
+                        }
+
+                        // Explicitly do not append the newline glyph to prevent artifacts.
+                        Self::finalize_line(&mut line_buf, &mut lines, Some(line_metric));
                     }
+                    layout_utl::CharBehavior::WordBreak { render_glyph } => {
+                        // Word break encountered.
+                        if let Some(word) = word_buf.take() {
+                            Self::append_fragments_with_rules(
+                                &mut line_buf,
+                                &mut lines,
+                                &word,
+                                true,
+                                max_width,
+                                wrap_style,
+                                wrap_hard_break,
+                                font_storage,
+                            );
+                        }
 
-                    // We explicitly do not append the newline glyph to the layout.
-                    // This prevents the renderer from drawing a "tofu" (missing glyph)
-                    // or other unwanted visual artifact for the control character.
-                    Self::finalize_line(&mut line_buf, &mut lines, Some(line_metric));
-                    continue;
-                }
-
-                if word_separators.contains(&ch) {
-                    // Preserve the separator so the caller can render the
-                    // whitespace but keep wrapping decisions at word
-                    // boundaries.
-                    if let Some(word) = word_buf.take() {
-                        Self::append_fragments_with_rules(
-                            &mut line_buf,
-                            &mut lines,
-                            &word,
-                            true,
-                            max_width,
-                            wrap_style,
-                            wrap_hard_break,
-                            font_storage,
-                        );
+                        if render_glyph {
+                            let fragment = create_fragment(ch);
+                            // Append the separator itself (e.g., space).
+                            Self::append_fragments_with_rules(
+                                &mut line_buf,
+                                &mut lines,
+                                std::slice::from_ref(&fragment),
+                                false,
+                                max_width,
+                                wrap_style,
+                                wrap_hard_break,
+                                font_storage,
+                            );
+                        }
                     }
-
-                    Self::append_fragments_with_rules(
-                        &mut line_buf,
-                        &mut lines,
-                        std::slice::from_ref(&fragment),
-                        false,
-                        max_width,
-                        wrap_style,
-                        wrap_hard_break,
-                        font_storage,
-                    );
-                    continue;
-                }
-
-                if matches!(wrap_style, WrapStyle::CharWrap) {
-                    // Each character is flushed immediately so the helper only
-                    // operates on single glyph fragments.
-                    Self::append_fragments_with_rules(
-                        &mut line_buf,
-                        &mut lines,
-                        std::slice::from_ref(&fragment),
-                        true,
-                        max_width,
-                        wrap_style,
-                        wrap_hard_break,
-                        font_storage,
-                    );
-                    continue;
-                }
-
-                match &mut word_buf {
-                    Some(buffer) => buffer.push(fragment),
-                    None => word_buf = Some(vec![fragment]),
+                    layout_utl::CharBehavior::Regular => {
+                        let fragment = create_fragment(ch);
+                        if matches!(wrap_style, WrapStyle::CharWrap) {
+                            Self::append_fragments_with_rules(
+                                &mut line_buf,
+                                &mut lines,
+                                std::slice::from_ref(&fragment),
+                                true,
+                                max_width,
+                                wrap_style,
+                                wrap_hard_break,
+                                font_storage,
+                            );
+                        } else {
+                            match &mut word_buf {
+                                Some(buffer) => buffer.push(fragment),
+                                None => word_buf = Some(vec![fragment]),
+                            }
+                        }
+                    }
+                    layout_utl::CharBehavior::Ignore => {
+                        // Skip control characters or other ignored chars.
+                    }
                 }
             }
         }
@@ -690,6 +694,44 @@ mod layout_utl {
 
     use super::*;
     use std::sync::Arc;
+
+    /// Defines how a character should be handled during layout.
+    pub enum CharBehavior {
+        /// Always triggers a hard line break (e.g., newline).
+        LineBreak,
+        /// Breaks a word but may or may not be rendered (e.g., space, tab).
+        WordBreak { render_glyph: bool },
+        /// Standard character content.
+        Regular,
+        /// Character should be completely ignored (e.g., non-printable control chars).
+        Ignore,
+    }
+
+    /// Classifies a character to determine its layout behavior.
+    pub fn classify_char(
+        ch: char,
+        word_separators: &HashSet<char, fxhash::FxBuildHasher>,
+        linebreak_char: &HashSet<char, fxhash::FxBuildHasher>,
+    ) -> CharBehavior {
+        if linebreak_char.contains(&ch) {
+            return CharBehavior::LineBreak;
+        }
+
+        if word_separators.contains(&ch) {
+            // Render the separator only if it is NOT a control character.
+            // Spaces are not control chars, but tabs are.
+            // This prevents "tofu" rendering for tabs until proper tab support is added.
+            return CharBehavior::WordBreak {
+                render_glyph: !ch.is_control(),
+            };
+        }
+
+        if ch.is_control() {
+            return CharBehavior::Ignore;
+        }
+
+        CharBehavior::Regular
+    }
 
     #[derive(Clone)]
     /// Precomputed glyph data used to build layout buffers.
